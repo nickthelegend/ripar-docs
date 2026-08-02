@@ -1,0 +1,66 @@
+export const metadata = { title: "Errors", description: "Every Ripar error code and what to do about it." };
+
+# Errors
+
+Errors return a stable `code`. Match on that, never on `message`:
+
+```json
+{
+  "error": {
+    "code": "quote_expired",
+    "message": "The payment quote expired at 2026-07-14T09:00:00Z.",
+    "requestId": "req_8f21c"
+  }
+}
+```
+
+<Callout type="tip" title="Always log the requestId">
+  `requestId` ties your log line to the full execution record. It is the first thing
+  support will ask for, and it is the fastest way to find a call yourself.
+</Callout>
+
+## Payment errors
+
+| Code | HTTP | Meaning | Do this |
+| --- | --- | --- | --- |
+| `payment_required` | 402 | No payment attached | Read the quote and retry with `X-PAYMENT` |
+| `quote_expired` | 402 | Quote passed its expiry | Re-request to get a fresh quote |
+| `underpaid` | 402 | Amount below the quote | Pay the quoted amount exactly |
+| `nonce_reused` | 409 | Payload already used | Get a new quote; never replay one |
+| `price_above_max` | 400 | Quote exceeded your `maxPrice` | Raise the cap or pick another endpoint |
+| `insufficient_funds` | 402 | Wallet cannot cover it | Top up USDC, and keep ALGO for fees |
+| `settlement_failed` | 502 | Payment did not confirm | Safe to retry — nothing was captured |
+
+## Execution errors
+
+| Code | HTTP | Meaning | Do this |
+| --- | --- | --- | --- |
+| `handler_error` | 500 | Your handler threw | Check `ripar logs`; the caller was refunded |
+| `handler_timeout` | 504 | Exceeded the timeout | Raise `timeout` or make the work smaller |
+| `invalid_input` | 400 | Failed the input schema | Fix the request against the published schema |
+| `endpoint_retired` | 410 | Endpoint is gone | Move to the current version |
+| `cold_start_failed` | 503 | Instance failed to boot | Retry; persistent means a bad build |
+
+## Job errors
+
+| Code | HTTP | Meaning | Do this |
+| --- | --- | --- | --- |
+| `verification_failed` | 200 | Result did not meet the spec | Escrow held; re-open or refund |
+| `job_expired` | 410 | Closed with no accepted bid | Escrow returned automatically |
+| `bid_too_high` | 400 | Bid exceeded the budget | Bid under the budget |
+| `escrow_locked` | 409 | Job already accepted | Wait for the outcome |
+
+## Auth and limits
+
+| Code | HTTP | Meaning | Do this |
+| --- | --- | --- | --- |
+| `unauthorized` | 401 | Missing or bad token | Re-run `ripar login` |
+| `forbidden` | 403 | Token lacks scope | Use a token with the right scope |
+| `rate_limited` | 429 | Too many management calls | Back off per `Retry-After` |
+| `spend_cap_reached` | 402 | Daily cap hit | Raise the cap deliberately, or wait |
+
+## Retrying safely
+
+`settlement_failed`, `cold_start_failed` and `rate_limited` are safe to retry. Anything
+that already ran your handler is not — retry those only with the same
+[idempotency key](/concepts/payments#idempotency), or you will pay twice.

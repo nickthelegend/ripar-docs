@@ -1,0 +1,120 @@
+export const metadata = {
+  title: "Quickstart",
+  description: "Ship a paid x402 endpoint on Ripar in about five minutes.",
+};
+
+# Quickstart
+
+By the end of this page you will have a public HTTPS endpoint that charges USDC per
+request and is discoverable by any agent on the network.
+
+<Callout type="note" title="What you need">
+  Node 20+, an Algorand address to receive funds (Pera, Defly or any wallet), and a
+  Ripar account from [app.ripar.io](https://app.ripar.io).
+</Callout>
+
+## 1 · Install the CLI
+
+```bash
+npm install -g @ripar/cli
+ripar login
+```
+
+`ripar login` opens a browser, and writes a token to `~/.ripar/config.json`. Everything
+below uses that token.
+
+## 2 · Create a project
+
+```bash
+ripar init summarize --template node
+cd summarize
+```
+
+The template is an ordinary HTTP handler. There is nothing blockchain-shaped about it —
+that is the point:
+
+```ts title="src/index.ts"
+import { defineEndpoint } from "@ripar/sdk";
+
+export default defineEndpoint({
+  // What a caller pays, per request, in USDC.
+  price: "0.01",
+  async handler({ body }) {
+    const { text } = body as { text: string };
+    return { summary: text.slice(0, 280) };
+  },
+});
+```
+
+## 3 · Set where you get paid
+
+```bash
+ripar config set payout ADDR…YOUR_ALGORAND_ADDRESS
+```
+
+<Callout type="warning" title="Ripar never holds your balance">
+  Payments settle directly from the caller to the address you set here. Ripar routes,
+  prices, verifies and records — it is never a custodian. See [Custody
+  model](/concepts/custody).
+</Callout>
+
+## 4 · Deploy
+
+```bash
+ripar deploy
+```
+
+```ansi title="output"
+✓ built            summarize
+✓ endpoint         https://api.ripar.io/a/summarize
+✓ payout address   ADDR…K7QX
+✓ price            0.01 USDC / request
+✓ listed           x402 Bazaar
+● live
+```
+
+## 5 · Call it and watch it charge
+
+An unpaid request is refused with the price attached:
+
+```bash
+curl -i https://api.ripar.io/a/summarize \
+  -H 'content-type: application/json' \
+  -d '{"text":"..."}'
+```
+
+```http
+HTTP/1.1 402 Payment Required
+X-Payment-Required: {"amount":"0.01","asset":"USDC","network":"algorand","payTo":"ADDR…K7QX"}
+```
+
+Retry it with the client, which handles the payment leg for you:
+
+```bash
+ripar call summarize --data '{"text":"a long article…"}'
+```
+
+```ansi title="output"
+→ 402  price 0.01 USDC
+→ paid 0.01 USDC  tx 7A2F…9C1B  (2.8s)
+← 200  {"summary":"…"}
+```
+
+That transaction is on Algorand MainNet. The USDC is in your wallet, not in an account
+on Ripar waiting for a payout run.
+
+## What just happened
+
+1. Your handler was packaged and given a public HTTPS route.
+2. Ripar wrapped it in x402 middleware that refuses unpaid calls with a price.
+3. The endpoint was registered with the Bazaar so agents can discover its schema.
+4. A caller paid, the facilitator verified, and your handler ran exactly once.
+
+<Cards>
+  <Card title="Build a workflow" href="/guides/workflows">
+    Give it triggers, conditions and guaranteed retries.
+  </Card>
+  <Card title="Sell on the marketplace" href="/guides/marketplace">
+    Pricing models, revenue share, and getting found.
+  </Card>
+</Cards>

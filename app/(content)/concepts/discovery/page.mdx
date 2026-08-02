@@ -1,0 +1,75 @@
+export const metadata = {
+  title: "Discovery & the Bazaar",
+  description: "How an agent finds an endpoint it has never heard of, reads its schema, and calls it.",
+};
+
+# Discovery & the Bazaar
+
+A paid endpoint nobody can find earns nothing. The **x402 Bazaar** is the discovery
+layer: a public index of endpoints, their prices and their input schemas.
+
+## What gets published
+
+When you deploy, Ripar registers a record like this:
+
+```json
+{
+  "name": "wallet-risk/score",
+  "endpoint": "https://api.ripar.io/a/wallet-risk-score",
+  "price": { "amount": "0.010", "asset": "USDC", "network": "algorand" },
+  "input": {
+    "type": "object",
+    "properties": { "address": { "type": "string" } },
+    "required": ["address"]
+  },
+  "tags": ["algorand", "risk", "wallet"]
+}
+```
+
+The schema is the important part. It is what lets a caller that has never seen your
+service construct a valid request without reading documentation.
+
+## Finding things
+
+```bash
+ripar search "price feed" --max-price 0.005
+```
+
+Or from an agent over MCP, which is the more common case:
+
+```
+agent → ripar.search({ q: "algo/usd price", maxPrice: "0.005" })
+tool  → [{ name: "algo-usd/spot", price: "0.001", latencyP50: 180 }, …]
+agent → ripar.call({ name: "algo-usd/spot" })
+tool  → 402 → paid 0.001 USDC → { "price": 0.1842, "ts": 1767225600 }
+```
+
+The agent discovered a service, evaluated its price against a budget, paid it and used
+the result — with no human in the loop at any step.
+
+## Ranking
+
+Search results are ordered on observable behaviour, not on who paid for placement:
+
+- **Success rate** over the trailing window
+- **Latency** at p50 and p95
+- **Price** relative to comparable endpoints
+- **Volume** of settled calls
+
+<Callout type="warning" title="Listing is not endorsement">
+  Anything can list itself. Discovery tells you an endpoint exists and how it has
+  behaved — it is not a guarantee of correctness. Set a `maxPrice`, validate responses,
+  and prefer endpoints with real settled volume.
+</Callout>
+
+## Staying unlisted
+
+Not everything should be public. Private endpoints still take x402 payments but never
+enter the index:
+
+```bash
+ripar deploy --private
+```
+
+Useful for paid internal services where you want metered billing between teams without
+advertising the capability.

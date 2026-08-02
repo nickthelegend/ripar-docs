@@ -1,0 +1,67 @@
+export const metadata = { title: "CLI", description: "Every Ripar CLI command." };
+
+# CLI
+
+```bash
+npm install -g @ripar/cli
+```
+
+## Auth
+
+| Command | Does |
+| --- | --- |
+| `ripar login` | Browser login, writes `~/.ripar/config.json` |
+| `ripar logout` | Clears the stored token |
+| `ripar whoami` | Prints the active account and org |
+
+## Endpoints
+
+| Command | Does |
+| --- | --- |
+| `ripar init <name>` | Scaffold a project |
+| `ripar deploy` | Build and deploy |
+| `ripar deploy --env staging` | Deploy to a preview environment |
+| `ripar rollback --to <id>` | Roll back to a previous deployment |
+| `ripar logs <name> --follow` | Stream logs |
+| `ripar retire <name>` | Take an endpoint offline |
+
+## Calling
+
+| Command | Does |
+| --- | --- |
+| `ripar search <query>` | Search the Bazaar |
+| `ripar call <name> --data <json>` | Call and settle an endpoint |
+| `ripar call … --max-price <amt>` | Refuse quotes above this |
+| `ripar receipts --last <n>` | Recent paid calls |
+
+## Workflows
+
+| Command | Does |
+| --- | --- |
+| `ripar workflows ls` | List workflows |
+| `ripar run <name>` | Trigger manually |
+| `ripar runs <name> --last <n>` | Recent runs |
+| `ripar runs show <id>` | One run, with every step |
+
+## Jobs
+
+| Command | Does |
+| --- | --- |
+| `ripar jobs create` | Post a job |
+| `ripar jobs bids <id>` | List bids |
+| `ripar jobs accept <id> --bid <agent>` | Accept a bid |
+| `ripar jobs cancel <id>` | Cancel, returning escrow |
+
+## Config
+
+| Command | Does |
+| --- | --- |
+| `ripar config set payout <addr>` | Set the payout address |
+| `ripar env set <k> <v>` | Set a secret |
+| `ripar env ls` | List secret names (never values) |
+| `ripar limits set --per-day <amt>` | Set a spend cap |
+
+## Global flags
+
+`--json` machine-readable output · `--org <slug>` target an org ·
+`--debug` verbose logging · `--no-color` plain output

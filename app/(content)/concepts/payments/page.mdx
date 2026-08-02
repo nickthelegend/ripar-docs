@@ -1,0 +1,70 @@
+export const metadata = {
+  title: "Payments & settlement",
+  description: "How a Ripar call becomes USDC in your Algorand address, and what happens when it doesn't.",
+};
+
+# Payments & settlement
+
+## The path of one payment
+
+1. The caller requests your endpoint with no payment.
+2. Ripar's middleware answers `402` with a quote: amount, asset, destination, nonce and
+   an expiry.
+3. The caller signs a USDC transfer for exactly that quote and retries with `X-PAYMENT`.
+4. The **facilitator** verifies the payment: right amount, right asset, right
+   destination, unexpired, and the nonce has not been used.
+5. Your handler runs.
+6. The response carries `X-Payment-Response` with the transaction id.
+
+Settlement is direct: caller → your address. Ripar is never in the path of the funds.
+
+<Callout type="note" title="Nonces make replay impossible">
+  Each quote carries a single-use nonce. A payment payload cannot be captured and
+  replayed against the same endpoint for a second free call.
+</Callout>
+
+## What you get paid in
+
+USDC as a native Algorand ASA (asset id `31566704` on MainNet). Not a bridged
+representation and not a wrapped token — the same USDC Circle issues.
+
+## Failure cases, and who eats them
+
+The rule is simple: **you are paid when work is delivered.** If it is not delivered, the
+payment does not stand.
+
+| What happened | Payment | Notes |
+| --- | --- | --- |
+| Handler returned `2xx` | Captured | Normal path |
+| Handler returned `5xx` | Refunded | The caller is not charged for your outage |
+| Handler timed out | Refunded | Timeout is configurable per endpoint |
+| Payment underpaid the quote | Rejected before the handler | `402` again with the same quote |
+| Quote expired | Rejected | Caller re-requests to get a fresh quote |
+| Same nonce twice | Rejected | Replay protection |
+
+## Idempotency
+
+A caller that retries after a network blip must not pay twice for one unit of work.
+Attach an idempotency key and Ripar collapses retries onto a single billable execution:
+
+```ts
+await ripar.call("summarize", {
+  text: "…",
+  idempotencyKey: "job-8f21c-attempt",
+});
+```
+
+The first call executes and charges. Subsequent calls with the same key inside the
+retention window return the stored response and do **not** charge again.
+
+## Reconciliation
+
+Every call is written to the execution record with the settling transaction, so
+"where did this month's spend go" is a query:
+
+```bash
+ripar receipts --since 2026-07-01 --format csv > july.csv
+```
+
+Each row carries the request id, the endpoint, the amount, the Algorand transaction id
+and the response status — enough to tie a line of accounting to a block explorer.

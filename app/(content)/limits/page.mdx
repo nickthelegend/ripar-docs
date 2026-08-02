@@ -1,0 +1,65 @@
+export const metadata = {
+  title: "Limits & pricing",
+  description: "Platform limits, what Ripar charges, and what goes to the network.",
+};
+
+# Limits & pricing
+
+## What you pay
+
+There are three separate things, and it helps to keep them apart:
+
+| Cost | Goes to | Amount |
+| --- | --- | --- |
+| Endpoint price | The endpoint owner | Whatever they quote |
+| Network fee | Algorand | ~0.001 ALGO per transaction |
+| Platform fee | Ripar | A percentage of settled endpoint revenue |
+
+Ripar takes its cut from **settled revenue on the marketplace**. Deploying, running
+workflows and calling endpoints do not carry a per-seat or per-call platform charge.
+
+<Callout type="note" title="No seats">
+  Pricing does not scale with how many people are on your team. It scales with how much
+  your endpoints earn.
+</Callout>
+
+## Platform limits
+
+| Limit | Value | Notes |
+| --- | --- | --- |
+| Endpoint timeout | 300s max | Default 30s |
+| Request body | 10 MB | Larger payloads should use a URL |
+| Response body | 10 MB | Same |
+| Workflow steps | 100 per run | Split larger jobs |
+| Workflow duration | 15 min per run | Cron workflows can chain |
+| Management API | 600 req/min | Per token |
+| Idempotency window | 24h | Keys are remembered this long |
+| Job budget | 0.10 USDC min | No maximum |
+| Bid window | 1 min – 24h | Set with `--closes` |
+
+## Cold starts
+
+Node templates typically boot in under 300ms. Endpoints with steady traffic stay warm.
+An endpoint that must never cold-start can hold a minimum instance:
+
+```bash
+ripar scale summarize --min-instances 1
+```
+
+That instance runs continuously, so it costs whether or not anyone calls.
+
+## Rate limiting your own endpoint
+
+Ripar does not throttle paid calls — payment is the throttle. If you want a hard ceiling
+regardless:
+
+```ts
+rateLimit: { perMinute: 600, per: "payer" },
+```
+
+Exceeding it returns `429` and does not charge the caller.
+
+## Quotas
+
+Hobby accounts have a monthly cap on settled call volume before a plan upgrade is
+required. The dashboard shows current usage; `ripar limits show` prints it too.

@@ -1,0 +1,80 @@
+export const metadata = {
+  title: "Security",
+  description: "Keys, escrow, spend caps and attribution — what protects you and what does not.",
+};
+
+# Security
+
+## Keys stay yours
+
+Signing happens in your wallet or an enclave-backed signer you control. Private keys are
+never transmitted to Ripar and never stored there. See [Custody
+model](/concepts/custody).
+
+## Spend caps
+
+The single most important control when something autonomous holds a wallet. Caps are
+enforced server-side, so an agent cannot raise its own ceiling.
+
+```bash
+ripar limits set --per-day 5.00
+ripar limits set --per-run 0.25 --workflow liquidation-guard
+ripar limits set --per-call 0.05 --agent research-bot
+```
+
+They compose — a call must satisfy every cap that applies to it.
+
+| Scope | Flag | Guards against |
+| --- | --- | --- |
+| Per call | `--per-call` | One absurdly-priced endpoint |
+| Per run | `--per-run` | A workflow looping inside a single run |
+| Per day | `--per-day` | Slow drift nobody notices |
+| Per agent | `--agent` | One misbehaving agent among many |
+
+<Callout type="warning" title="Caps are the backstop, not the plan">
+  A cap turns an unbounded loss into a bounded one. It does not make an agent correct.
+  Pair caps with `maxPrice` on every call and validation on every response.
+</Callout>
+
+## Escrow
+
+Orchestrator budgets sit in a smart contract, not with Ripar, and release only against a
+verified result. Ripar cannot redirect an escrow or release one that failed
+verification. A job that expires unaccepted returns its escrow automatically.
+
+## Attribution
+
+Every payment carries the request it paid for. An audit is a query:
+
+```bash
+ripar receipts --since 2026-07-01 --format csv
+```
+
+Each row ties a request id to an endpoint, an amount, an Algorand transaction and a
+response status.
+
+## Secrets
+
+Set per environment, never committed:
+
+```bash
+ripar env set OPENAI_API_KEY sk-… --env production
+```
+
+Values cannot be read back through the API or the CLI once set — `ripar env ls` returns
+names only. Rotate with `ripar env set` again; the new value applies on next deploy.
+
+## Reporting a vulnerability
+
+Email `security@ripar.io`. Please include reproduction steps and give us a reasonable
+window before disclosure.
+
+## What this does not cover
+
+Being honest about the boundary:
+
+- **Endpoint quality.** Anyone can list on the Bazaar. Ranking reflects observed
+  behaviour, not an audit. Validate what you get back.
+- **Prompt injection.** If your agent feeds untrusted text to an LLM that can call paid
+  endpoints, spend caps bound the damage — they do not prevent the call.
+- **Your own handler.** Code you deploy runs with the secrets you give it.

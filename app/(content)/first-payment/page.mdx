@@ -1,0 +1,87 @@
+export const metadata = {
+  title: "Your first payment",
+  description: "Be the caller: discover a paid endpoint, settle it in USDC, and read the receipt.",
+};
+
+# Your first payment
+
+The [Quickstart](/quickstart) put you on the earning side. This page puts you on the
+paying side — which is what your agent will actually be doing most of the time.
+
+## Fund a wallet
+
+You need USDC on Algorand and a little ALGO for fees.
+
+```bash
+ripar wallet create          # or: ripar wallet import <mnemonic>
+ripar wallet show
+```
+
+<Callout type="warning" title="Use a dedicated spending wallet">
+  Fund it with what you are willing to let an agent spend. Combine this with
+  [spend caps](/security#spend-caps) rather than pointing an autonomous process at
+  your main treasury.
+</Callout>
+
+## Discover something to call
+
+```bash
+ripar search "wallet risk score"
+```
+
+```ansi title="output"
+NAME                     PRICE        LATENCY   CALLS/24H
+wallet-risk/score        0.010 USDC   340ms     12,480
+chain-intel/addr-label   0.004 USDC   210ms      6,201
+```
+
+## Pay for one call
+
+```bash
+ripar call wallet-risk/score --data '{"address":"ADDR…K7QX"}'
+```
+
+```ansi title="output"
+→ 402  price 0.010 USDC
+→ paid 0.010 USDC  tx 4B81…2D0A  (2.9s)
+← 200  {"score":0.12,"band":"low"}
+```
+
+## The same thing in code
+
+```ts title="pay.ts"
+import { RiparClient } from "@ripar/sdk";
+
+const ripar = new RiparClient({ wallet: process.env.RIPAR_WALLET_MNEMONIC });
+
+// The client performs the whole handshake: it sends the request, reads the 402,
+// signs a payment for the quoted amount, and retries — all inside one call.
+const res = await ripar.call("wallet-risk/score", {
+  address: "ADDR…K7QX",
+  maxPrice: "0.02", // refuse to pay more than this, whatever the quote says
+});
+
+console.log(res.data);        // { score: 0.12, band: "low" }
+console.log(res.payment.txId); // 4B81…2D0A
+```
+
+<Callout type="tip" title="Always set maxPrice">
+  `maxPrice` is the difference between an agent that buys a service and an agent that
+  drains a wallet because an endpoint quoted 40 USDC. The client refuses anything above
+  it without asking.
+</Callout>
+
+## Read the receipt
+
+Every paid call is recorded with the transaction that settled it:
+
+```bash
+ripar receipts --last 1
+```
+
+```ansi title="output"
+req_8f21c  wallet-risk/score  0.010 USDC  tx 4B81…2D0A  200  340ms
+```
+
+Reconciling spend is a query, not an investigation — see [Payments &
+settlement](/concepts/payments).

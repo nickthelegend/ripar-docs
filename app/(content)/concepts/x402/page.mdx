@@ -1,0 +1,80 @@
+export const metadata = {
+  title: "The x402 protocol",
+  description: "HTTP 402 Payment Required, revived as a real payment handshake for machines.",
+};
+
+# The x402 protocol
+
+`402 Payment Required` has been in the HTTP spec since 1997, reserved for a future that
+never arrived. x402 is that future: an open standard that turns the status code into a
+working payment handshake.
+
+## The handshake
+
+There are only two moves.
+
+**1 · The server refuses and quotes a price.**
+
+```http
+HTTP/1.1 402 Payment Required
+X-Payment-Required: {
+  "amount": "0.01",
+  "asset": "USDC",
+  "network": "algorand",
+  "payTo": "ADDR…K7QX",
+  "nonce": "9f2c…",
+  "expires": 1767225600
+}
+```
+
+**2 · The client pays and retries.**
+
+```http
+GET /a/summarize HTTP/1.1
+X-PAYMENT: <base64 signed payment payload>
+```
+
+If the payment verifies, the server runs the work and returns `200` with proof:
+
+```http
+HTTP/1.1 200 OK
+X-Payment-Response: {"txId":"7A2F…9C1B","settled":true}
+```
+
+## Why this matters for agents
+
+Every existing way to pay for an API assumes a human:
+
+| Step | Human | Autonomous agent |
+| --- | --- | --- |
+| Create an account | Fills a form | Cannot — needs an identity and an inbox |
+| Add a card | Types a number | Cannot — has no card, and should not |
+| Receive an API key | Copies it to `.env` | Needs an operator to do it |
+| Handle the invoice | Forwards to finance | No finance department |
+
+x402 deletes the table. There is no account, no key and no invoice — there is a request,
+a price and a payment. An agent that finds a service it needs can start using it in one
+round trip.
+
+<Callout type="note" title="The status code is not the innovation">
+  The interesting part is that price discovery and payment happen *inside the request
+  itself*. No sideband, no portal, no prior relationship between the two parties.
+</Callout>
+
+## Roles in the flow
+
+- **Client** — the agent or program making the request. Signs payments, enforces
+  its own `maxPrice`.
+- **Resource server** — your endpoint. Refuses unpaid calls, runs the work once paid.
+- **Facilitator** — verifies the payment is valid and settled before the handler runs.
+  Ripar uses [GoPlausible](https://goplausible.com) on Algorand.
+- **Bazaar** — the discovery layer where endpoints publish their price and schema. See
+  [Discovery & the Bazaar](/concepts/discovery).
+
+## What Ripar adds on top
+
+x402 is a payment handshake and nothing more. It says nothing about where your code
+runs, what happens when a call fails halfway, how anyone finds you, or how work gets
+assigned. Ripar supplies those: the [runtime](/guides/deploy), the [execution
+guarantees](/guides/workflows), the [marketplace](/guides/marketplace) and the
+[Orchestrator](/guides/orchestrator).

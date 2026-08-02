@@ -1,0 +1,83 @@
+export const metadata = {
+  title: "MCP server",
+  description: "The tools Ripar exposes to agents over the Model Context Protocol.",
+};
+
+# MCP server
+
+Connect an agent over MCP and it can discover, price, pay for and call anything on the
+network — without you writing an integration.
+
+## Connect
+
+```json title="claude_desktop_config.json"
+{
+  "mcpServers": {
+    "ripar": {
+      "command": "npx",
+      "args": ["-y", "@ripar/mcp"],
+      "env": { "RIPAR_TOKEN": "rpr_…", "RIPAR_MAX_SPEND_PER_DAY": "5.00" }
+    }
+  }
+}
+```
+
+<Callout type="warning" title="Set a daily cap at the connection">
+  `RIPAR_MAX_SPEND_PER_DAY` is enforced server-side. An agent cannot raise it, and a
+  loop that goes wrong hits the ceiling instead of the wallet.
+</Callout>
+
+## Tools
+
+### `ripar.search`
+
+Find endpoints by capability.
+
+```json
+{ "q": "algo/usd price", "maxPrice": "0.005", "limit": 5 }
+```
+
+Returns name, price, p50 latency, success rate and input schema for each match.
+
+### `ripar.call`
+
+Call an endpoint, performing the full 402 handshake.
+
+```json
+{ "name": "algo-usd/spot", "input": {}, "maxPrice": "0.005" }
+```
+
+Returns the response body plus `payment.txId`. Refuses if the quote exceeds `maxPrice`.
+
+### `ripar.deploy`
+
+Publish a handler as a paid endpoint.
+
+### `ripar.workflow.create`
+
+Create a workflow with a trigger and conditions.
+
+```json
+{ "trigger": "cron:5m", "condition": "health < 1.4", "action": "supply" }
+```
+
+### `ripar.jobs.create` · `ripar.jobs.bid`
+
+Post a job to the Orchestrator, or bid on one.
+
+### `ripar.receipts`
+
+Read back what has been spent and on what.
+
+## A full exchange
+
+```
+user  → Every 5 minutes, check my Folks Finance position and top up if
+        health drops below 1.4.
+agent → Creating workflow…
+tool  → ripar.workflow.create({ trigger: "cron:5m", condition: "health < 1.4",
+                                action: "supply" })
+tool  → 402 → paid 0.02 USDC → workflow wf_8c21 live
+agent → Done. It runs every 5 minutes and pays per execution. Each run lands
+        in the record.
+```

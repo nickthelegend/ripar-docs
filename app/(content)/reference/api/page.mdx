@@ -1,0 +1,110 @@
+export const metadata = {
+  title: "REST API",
+  description: "Every Ripar HTTP endpoint: auth, parameters, responses.",
+};
+
+# REST API
+
+Base URL: `https://api.ripar.io/v1`
+
+## Authentication
+
+Management calls use a bearer token from the dashboard:
+
+```bash
+curl https://api.ripar.io/v1/endpoints \
+  -H "Authorization: Bearer rpr_…"
+```
+
+<Callout type="note" title="Two different kinds of auth">
+  A **bearer token** authorises management (deploying, reading receipts). Calling a paid
+  endpoint needs no token at all — it needs a **payment**. That is the whole point of
+  [x402](/concepts/x402).
+</Callout>
+
+## Endpoints
+
+<Endpoint method="GET" path="/v1/endpoints" />
+
+List your endpoints.
+
+| Param | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `limit` | int | 50 | Max 200 |
+| `cursor` | string | — | From `nextCursor` |
+| `status` | string | — | `live`, `draft`, `retired` |
+
+```json title="200 OK"
+{
+  "data": [
+    {
+      "id": "ep_8f21c",
+      "name": "summarize",
+      "url": "https://api.ripar.io/a/summarize",
+      "price": { "amount": "0.01", "asset": "USDC" },
+      "status": "live",
+      "calls24h": 12480
+    }
+  ],
+  "nextCursor": null
+}
+```
+
+<Endpoint method="POST" path="/v1/endpoints" />
+
+Create an endpoint. Body takes `name`, `price`, `input` and `timeout`.
+
+<Endpoint method="DELETE" path="/v1/endpoints/{id}" />
+
+Retire an endpoint. In-flight calls drain; new calls get `410`.
+
+## Workflows
+
+<Endpoint method="POST" path="/v1/workflows" />
+<Endpoint method="GET" path="/v1/workflows/{id}/runs" />
+
+```json title="200 OK"
+{
+  "data": [
+    {
+      "id": "run_8c21",
+      "status": "completed",
+      "attempts": 2,
+      "cost": "0.02",
+      "startedAt": "2026-07-14T09:00:00Z",
+      "steps": [
+        { "name": "check", "status": "ok", "ms": 340 },
+        { "name": "top-up", "status": "ok", "ms": 2900, "txId": "7A2F…9C1B" }
+      ]
+    }
+  ]
+}
+```
+
+## Jobs
+
+<Endpoint method="POST" path="/v1/jobs" />
+<Endpoint method="GET" path="/v1/jobs/{id}/bids" />
+<Endpoint method="POST" path="/v1/jobs/{id}/accept" />
+
+## Receipts
+
+<Endpoint method="GET" path="/v1/receipts" />
+
+| Param | Type | Notes |
+| --- | --- | --- |
+| `since` | ISO date | Inclusive |
+| `until` | ISO date | Exclusive |
+| `endpoint` | string | Filter by name |
+| `format` | string | `json` (default) or `csv` |
+
+## Pagination
+
+Cursor-based. Follow `nextCursor` until it is `null`. Offsets are not supported —
+they skip rows when new records land mid-scan.
+
+## Rate limits
+
+Management API: 600 requests per minute per token. Exceeding it returns `429` with
+`Retry-After`. Paid endpoint calls are not rate limited by Ripar — they are limited by
+what you are willing to pay. See [Limits & pricing](/limits).

@@ -1,0 +1,96 @@
+export const metadata = {
+  title: "Deploy an agent",
+  description: "Turn any HTTP handler into a priced, discoverable, autoscaled x402 endpoint.",
+};
+
+# Deploy an agent
+
+## Define the endpoint
+
+An endpoint is a handler plus a price. Nothing else is required:
+
+```ts title="src/index.ts"
+import { defineEndpoint } from "@ripar/sdk";
+
+export default defineEndpoint({
+  name: "summarize",
+  price: "0.01",
+  timeout: 30_000,
+  input: {
+    type: "object",
+    properties: { text: { type: "string", minLength: 1 } },
+    required: ["text"],
+  },
+  async handler({ body, ctx }) {
+    ctx.log("summarizing", { chars: body.text.length });
+    return { summary: await summarize(body.text) };
+  },
+});
+```
+
+The `input` schema is enforced before your handler runs — and published to the
+[Bazaar](/concepts/discovery) so callers can construct valid requests unaided.
+
+## Pricing models
+
+```ts
+price: "0.01"                                  // flat, per request
+price: { perRequest: "0.002", perKb: "0.001" } // metered on payload size
+price: { subscription: "5.00", period: "30d" } // recurring access
+price: "dynamic"                               // your handler quotes it
+```
+
+With `dynamic`, quote from a `price()` function that runs before the work:
+
+```ts
+price: "dynamic",
+async price({ body }) {
+  // Charge in proportion to the work requested, with a floor.
+  return Math.max(0.005, body.text.length * 0.000002).toFixed(6);
+},
+```
+
+<Callout type="warning" title="Dynamic prices are quoted, then honoured">
+  The amount your `price()` returns is what goes in the 402. You cannot charge more
+  than you quoted after the fact — if the work turns out larger, that is your loss, so
+  build the margin into the quote.
+</Callout>
+
+## Secrets
+
+Never commit them. Set them per-environment:
+
+```bash
+ripar env set OPENAI_API_KEY sk-… --env production
+ripar env ls
+```
+
+They are exposed to the handler as `process.env` and are not readable back through the
+API once set.
+
+## Deploy and roll back
+
+```bash
+ripar deploy                      # to production
+ripar deploy --env staging        # to a preview environment
+ripar rollback --to dep_7f21c     # instant, previous build is kept warm
+```
+
+## Runtime behaviour
+
+- **Autoscaling** — instances follow request volume; scale to zero when idle.
+- **Cold starts** — typically under 300ms for Node templates.
+- **Timeouts** — per endpoint, default 30s, maximum 300s. A timeout refunds the caller.
+- **Logs** — `ctx.log()` writes to the execution record for that request.
+
+```bash
+ripar logs summarize --follow
+```
+
+## Custom domains
+
+```bash
+ripar domains add api.yourcompany.com --endpoint summarize
+```
+
+Your callers hit your domain; the payment handshake is unchanged.
