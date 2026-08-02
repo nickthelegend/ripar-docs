@@ -1,11 +1,8 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
-  <defs>
-    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#ff8a4d"/>
-      <stop offset="100%" stop-color="#f0530c"/>
-    </linearGradient>
-  </defs>
-  <rect width="48" height="48" rx="13" fill="url(#g)"/>
-  <path d="M17 36V14h9.5a6.5 6.5 0 1 1 0 13H21l9 9" fill="none" stroke="#fff"
-        stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48"><defs>
+<linearGradient id="hi" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffd9a3"/><stop offset="1" stop-color="#ff8f42"/></linearGradient>
+<linearGradient id="lt" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ff9d4f"/><stop offset="1" stop-color="#ff6620"/></linearGradient>
+<linearGradient id="md" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f4541b"/><stop offset="1" stop-color="#c93400"/></linearGradient>
+<linearGradient id="dk" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#b62c00"/><stop offset="1" stop-color="#8a2000"/></linearGradient>
+<linearGradient id="dk2" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#8f2200"/><stop offset="1" stop-color="#5e1400"/></linearGradient>
+<linearGradient id="tile" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#1c1c1f"/><stop offset="1" stop-color="#0c0c0e"/></linearGradient>
+</defs><rect width="48" height="48" rx="13" fill="url(#tile)"/><path d="M24 24.5 L40 32 L24 39.5 L8 32 Z" fill="url(#md)"/><path d="M8 32 L8 36.5 L24 44.0 L24 39.5 Z" fill="url(#dk)"/><path d="M40 32 L40 36.5 L24 44.0 L24 39.5 Z" fill="url(#dk2)"/><path d="M24 14.5 L40 22 L24 29.5 L8 22 Z" fill="url(#lt)"/><path d="M8 22 L8 26.5 L24 34.0 L24 29.5 Z" fill="url(#md)"/><path d="M40 22 L40 26.5 L24 34.0 L24 29.5 Z" fill="url(#dk)"/><path d="M24 4.5 L40 12 L24 19.5 L8 12 Z" fill="url(#hi)"/><path d="M8 12 L8 16.5 L24 24.0 L24 19.5 Z" fill="url(#lt)"/><path d="M40 12 L40 16.5 L24 24.0 L24 19.5 Z" fill="url(#md)"/></svg>
