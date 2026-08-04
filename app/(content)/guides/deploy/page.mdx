@@ -34,17 +34,21 @@ The `input` schema is enforced before your handler runs — and published to the
 
 ## Pricing models
 
+An endpoint charges per call or sells a window. There are two shapes, and
+`price` accepts either a fixed amount or a function:
+
 ```ts
-price: "0.01"                                  // flat, per request
-price: { perRequest: "0.002", perKb: "0.001" } // metered on payload size
-price: { subscription: "5.00", period: "30d" } // recurring access
-price: "dynamic"                               // your handler quotes it
+price: "$0.01"                                  // flat, per request
+price: ({ body }) => …                          // you quote each request
+subscription: { price: "$5.00", period: "30d" } // one payment buys a window
 ```
 
-With `dynamic`, quote from a `price()` function that runs before the work:
+`price` and `subscription` are mutually exclusive — TypeScript rejects an
+endpoint that sets both, because the 402 can only quote one number.
+
+With a function, quote from anything on the request. It runs before the work:
 
 ```ts
-price: "dynamic",
 async price({ body }) {
   // Charge in proportion to the work requested, with a floor.
   return Math.max(0.005, body.text.length * 0.000002).toFixed(6);
@@ -55,6 +59,39 @@ async price({ body }) {
   The amount your `price()` returns is what goes in the 402. You cannot charge more
   than you quoted after the fact — if the work turns out larger, that is your loss, so
   build the margin into the quote.
+</Callout>
+
+## Subscriptions
+
+x402 settles one request at a time and nothing can pull from a caller's wallet
+later, so a subscription here is a single settlement that buys a window:
+
+```ts
+defineEndpoint({
+  name: "feed",
+  subscription: { price: "$5.00", period: "30d" },
+  handler: async () => ({ items: await latest() }),
+})
+```
+
+The first unpaid call gets a 402 quoting `$5.00`. Once it settles, the response
+carries `x-ripar-subscription: rsk_…`, and every call presenting that key runs
+free until it expires — the request never reaches the facilitator at all.
+
+```ts
+const sub = await client.subscribe("https://agent.example/api/feed")
+await client.call("https://agent.example/api/feed")  // free, until sub.expiresAt
+```
+
+A key is scoped to the endpoint that sold it, so the cheapest window on your
+agent cannot open the dearest one. Nothing renews on its own: when the window
+closes the endpoint quotes again and the caller decides.
+
+<Callout type="warning" title="The default store is per-process">
+  Keys live in memory unless you pass one. Behind two replicas, a key minted on A
+  is unknown to B and the caller is asked to pay twice. Pass a shared store —
+  `serve(agent, { subscriptions: { store } })` — for anything running more than one
+  instance. The interface is `get`/`put`/`sweep`.
 </Callout>
 
 ## Secrets
