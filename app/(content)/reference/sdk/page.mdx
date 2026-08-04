@@ -9,11 +9,21 @@ export const metadata = {
 `@ripar/sdk` is the whole authoring surface: a handler and a price on the earning
 side, one client on the paying side. There is no payment code in either — `serve()`
 puts the x402 middleware in front of your handlers, so an unpaid request never
-reaches your business logic.
+reaches your business logic. The [`ripar` CLI](/reference/cli) ships inside this same
+package.
 
-```bash
-npm install @ripar/sdk
-```
+<Callout type="warning" title="Not on npm yet">
+  `npm install @ripar/sdk` returns a `404` — version 0.1.0 has not been published. Install
+  from the repository:
+
+  ```bash
+  git clone https://github.com/nickthelegend/ripar-sdk && cd ripar-sdk
+  npm install && npm run build
+  npm link                       # then `npm link @ripar/sdk` in your project
+  ```
+
+  Every import below is the real surface, so nothing changes when it ships.
+</Callout>
 
 ```ts
 import { defineAgent, defineEndpoint, serve, RiparClient } from "@ripar/sdk";
@@ -21,7 +31,8 @@ import { defineAgent, defineEndpoint, serve, RiparClient } from "@ripar/sdk";
 
 <Callout type="note" title="Node 20 or newer">
   The client uses the global `fetch` and the server is an Express app. Both ship in the
-  package; nothing else is required to run a paid endpoint.
+  package; nothing else is required to run a paid endpoint. `ripar dev` needs 22.6+ for
+  Node's TypeScript stripping.
 </Callout>
 
 ## defineEndpoint()
@@ -55,13 +66,15 @@ export const summarize = defineEndpoint({
 | --- | --- | --- | --- |
 | `name` | `string` | — | Becomes the URL segment and the discovery name. Lowercase letters, digits, `-` and `/`. |
 | `description` | `string` | — | One line a stranger's agent uses to decide whether this is what it needs. |
-| `price` | `string` | — | USD-denominated: `"$0.01"` or `"0.01"`. The facilitator converts to the asset's base units. |
+| `price` | `string \| (ctx) => string` | — | USD-denominated: `"$0.01"` or `"0.01"`. The facilitator converts to the asset's base units. A function is evaluated per request. |
+| `subscription` | `{ price, period }` | — | One settlement buys a window. Mutually exclusive with `price` — the union makes setting both a compile error. |
+| `priceHint` | `string` | — | What the manifest shows when `price` is a function. Without it, discovery publishes the literal `"dynamic"`. |
 | `method` | `"GET" \| "POST"` | `"POST"` | |
-| `input` | JSON Schema object | — | Published to discovery. This is what lets a caller build a valid request unaided. |
-| `timeout` | `number` (ms) | `30000` | Between 1,000 and 300,000. Exceeding it refunds the caller. |
-| `listed` | `boolean` | `true` | `false` keeps the endpoint payable but out of the index. |
+| `input` | JSON Schema object | — | Published to discovery *and* enforced before payment. This is what lets a caller build a valid request unaided. |
+| `timeout` | `number` (ms) | `30000` | Between 1,000 and 300,000. Exceeding it returns `504` and settles nothing. |
+| `listed` | `boolean` | `true` | `false` keeps the endpoint payable but out of the manifest. |
 | `tags` | `string[]` | `[]` | |
-| `handler` | `(ctx) => R \| Promise<R>` | — | Your code. Runs only after payment has settled. |
+| `handler` | `(ctx) => R \| Promise<R>` | — | Your code. Runs only after payment has been verified. |
 
 ### The handler context
 
@@ -76,13 +89,14 @@ handler: ({ body, headers, query, log, payment }) => { … }
 | `body` | `unknown` | The parsed JSON body. Cast it, or validate with the same schema you published. |
 | `headers` | `Record<string, string \| undefined>` | Request headers as received. |
 | `query` | `Record<string, unknown>` | Parsed query string. |
-| `log` | `(message, data?) => void` | Written to the execution record for this request. |
-| `payment` | `{ txId?, payer?, amount, asset }` | Present once payment has been verified and settled. |
+| `log` | `(message, data?) => void` | Collected for this request; the last 20 are attached to an error response. |
+| `payment` | `{ txId?, payer?, amount, usd?, asset }` | The verified payment. `amount` is atomic units of `asset`; `usd` is that converted, when the decimals are known. |
 
-<Callout type="warning" title="Throwing is how a refund happens">
-  A handler that throws returns 5xx, and a 5xx refunds the caller. Never catch a failure
-  and return `200` with an error object in the body — the caller has then paid for
-  nothing and has no way to tell.
+<Callout type="warning" title="Throwing is how the caller keeps their money">
+  A handler that throws returns 5xx, and the payment middleware cancels settlement on any
+  status ≥ 400 — so a failed call is never charged rather than charged and refunded. Never
+  catch a failure and return `200` with an error object in the body: that settles the
+  payment, and the caller has paid for nothing with no way to tell.
 </Callout>
 
 ### Validation errors
@@ -99,7 +113,7 @@ time, so a bad definition fails the build rather than the first paying customer.
 
 ## defineAgent()
 
-Bundles endpoints into something a marketplace can list, rank and route to.
+Bundles endpoints, plus the metadata a manifest publishes, into one thing to serve.
 
 ```ts title="src/agent.ts"
 import { defineAgent } from "@ripar/sdk";
@@ -123,11 +137,16 @@ export const agent = defineAgent({
 | `handle` | `string` | — | 3–40 lowercase characters, digits or hyphens. Unique on the network. |
 | `description` | `string` | — | |
 | `version` | `string` | `"0.1.0"` | |
-| `skills` | `string[]` | `[]` | Used for matching, not for ranking. |
+| `skills` | `string[]` | `[]` | Free-form labels, published in the manifest. Nothing indexes them today. |
 | `payTo` | `string` | — | Algorand address that receives settlement. 58 base32 characters. |
 | `network` | `"mainnet" \| "testnet"` | `"mainnet"` | |
 | `endpoints` | `EndpointDef[]` | — | At least one. Names must be unique — they become URLs. |
-| `bidsOn` | `string[]` | `[]` | Orchestrator job tags this agent bids on. |
+
+<Callout type="note" title="bidsOn is accepted and ignored">
+  `AgentDef` still declares a `bidsOn` field and `defineAgent` defaults it to `[]`.
+  Nothing reads it: there is no bidding anywhere in the system, and no `defineBidder`.
+  Setting it has no effect.
+</Callout>
 
 <Callout type="warning" title="payTo is checked for shape, not for ownership">
   Settlement goes straight to this address. A typo that still passes the checksum sends
@@ -144,8 +163,9 @@ export const agent = defineAgent({
 
 ## serve()
 
-Builds the payment-gated server and listens. Returns the `http.Server`, so a test can
-close it.
+Builds the payment-gated server and listens. Returns the `http.Server` with two extras
+bolted on — `shutdown(reason?)` and `uninstallSignals()` — so an embedder can drain on
+its own terms.
 
 ```ts title="src/index.ts"
 import { serve } from "@ripar/sdk";
@@ -163,10 +183,17 @@ const server = await serve(agent, {
 | Option | Type | Default | Notes |
 | --- | --- | --- | --- |
 | `port` | `number` | `process.env.PORT` or `4021` | |
-| `facilitatorUrl` | `string` | `https://facilitator.goplausible.xyz` | The default sponsors network fees, so you never fund an ALGO balance. |
+| `facilitatorUrl` | `string` | `https://facilitator.goplausible.xyz` | The default sponsors network fees, so callers need no ALGO. |
 | `network` | `"mainnet" \| "testnet"` | The agent's `network` | |
 | `payTo` | `string` | The agent's `payTo` | Overrides per deployment — useful for a staging address. |
 | `basePath` | `string` | `""` | Mount prefix for every route. |
+| `rateLimit` | `{ perMinute, per? }` | off | `per` is `"payer"` (default) or `"ip"`. In-process. |
+| `idempotency` | `{ windowMs?, max? }` | off | Honour `Idempotency-Key`. Defaults 10 min / 500 entries, in-process. |
+| `subscriptions` | `{ store? }` | in-memory store | Pass a shared store for more than one replica. |
+| `runsCapacity` | `number` | `100` | Size of the ring buffer behind `/_ripar/runs`. |
+| `shutdownTimeoutMs` | `number` | — | How long `SIGTERM` waits for in-flight work. |
+| `handleSignals` | `boolean` | `true` | Register `SIGTERM`/`SIGINT` inside `serve()`. |
+| `onShutdown` | `({ reason, outcome, abandoned, ms }) => void` | exits the process | Override when something else owns the lifecycle. |
 | `onReady` | `({ port, routes, network }) => void` | logs to stdout | |
 
 ### What gets mounted
@@ -176,6 +203,12 @@ const server = await serve(agent, {
 | `POST /<endpoint name>` | Yes | One per endpoint, gated by the x402 middleware. |
 | `GET /.well-known/ripar.json` | No | The manifest. Discovery has to work before payment can. |
 | `GET /health` | No | Liveness. Point your platform's health check here. |
+| `GET /metrics` | No | Prometheus text: requests by endpoint and status, in-flight, duration, settled. |
+| `GET /_ripar/runs` | No | The last calls: id, endpoint, status, ms, txId. No request bodies. |
+
+The unpaid routes are registered *before* the gate, so they cannot accidentally be gated.
+`/metrics` is free for the same reason `/health` is: an agent nobody can scrape is an
+agent nobody can alert on.
 
 <Callout type="note" title="Why the manifest is free">
   A caller that has never met you reads the manifest to learn what exists, what it
@@ -208,19 +241,35 @@ console.log(manifest(agent, "https://api.example.com"));
 {
   "name": "Text Tools",
   "handle": "text-tools",
+  "description": "Small, cheap text utilities priced per call.",
+  "version": "0.1.0",
+  "skills": ["text"],
   "network": "mainnet",
   "payTo": "ADDR…K7QX",
   "endpoints": [
     {
       "name": "summarize",
+      "description": "Returns a short summary of any text payload.",
       "url": "https://api.example.com/summarize",
       "method": "POST",
       "price": "$0.01",
-      "input": { "type": "object", "required": ["text"] }
+      "pricing": "fixed",
+      "input": { "type": "object", "required": ["text"] },
+      "tags": []
     }
   ]
 }
 ```
+
+`pricing` is `"fixed"`, `"dynamic"` or `"subscription"`, and a subscription entry also
+carries `period` — a browsing agent needs to know that `$5.00` buys a window, not one
+extremely expensive request. A price function cannot be serialised, so a dynamic entry
+publishes your `priceHint` or the literal `"dynamic"`; inventing a number here would be
+worse than publishing none, because an agent would budget against it.
+
+`serve()` adds an `x402` block to what it serves at `/.well-known/ripar.json` —
+facilitator, CAIP-2 network id and the USDC asset — which `manifest()` alone does not
+include.
 
 Endpoints with `listed: false` are absent — they stay payable, they are just not
 advertised.
@@ -254,13 +303,23 @@ res.status;        // 200
 | `secretKey` | `Uint8Array` | — | Raw 64-byte key, as an alternative to `mnemonic`. |
 | `network` | `"mainnet" \| "testnet"` | `"mainnet"` | |
 | `maxPrice` | `string` | — | USD ceiling per call. The single most important guard when something autonomous holds the wallet. |
+| `maxPerDay` | `string` | — | USD ceiling across a rolling 24h. Backed by an in-memory `SpendLedger`. |
+| `retry` | `RetryOptions \| false` | `{ attempts: 3, baseMs: 250, maxMs: 8000 }` | 5xx and transport failures only. Never 4xx. |
 | `fetchImpl` | `typeof fetch` | `globalThis.fetch` | Swap in an instrumented fetch for tests. |
 
-<Callout type="tip" title="maxPrice is checked before anything is signed">
-  The client reads the quote first and throws `price_above_max` rather than paying it.
-  Without it, a wrapped fetch settles whatever it is quoted — which is exactly the
-  runaway you are trying to prevent.
+Two read-only properties expose the ledger: `spentToday` and `remainingToday`
+(`Infinity` when uncapped).
+
+<Callout type="warning" title="Both caps are enforced here, in this process">
+  The client reads the quote first and throws `price_above_max` or `daily_cap_reached`
+  rather than paying. Without a cap set, a wrapped fetch settles whatever it is quoted.
+  **No server, facilitator or contract enforces a caller's budget** — see
+  [Security](/security#spend-caps). The daily window is rolling, not calendar, and lives in
+  memory: restart the process and it restarts too.
 </Callout>
+
+If a cap is set and the quote cannot be decoded, the client throws `unreadable_quote`
+rather than paying blind. A cap that cannot read the number must refuse, not guess.
 
 ### quote()
 
@@ -272,12 +331,16 @@ const q = await client.quote("https://api.example.com/summarize");
 
 q.paymentRequired; // true
 q.status;          // 402
-q.requirements;    // { amount: "$0.01", asset: "USDC", payTo: "ADDR…", nonce: "…" }
+q.requirements;    // { x402Version: 2, accepts: [{ amount: "10000", asset: "10458941", … }] }
 ```
 
-If the endpoint answers with anything other than `402`, you get
+The requirements are decoded from the base64 `PAYMENT-REQUIRED` header, falling back to
+the body. If the endpoint answers with anything other than `402`, you get
 `{ paymentRequired: false, status }` — that is how you tell a free endpoint from a paid
 one without a special case.
+
+Send a body when the endpoint prices dynamically. `quote()` adds a JSON content type for
+you, because a body the server will not parse is a body that gets priced from `{}`.
 
 ### call()
 
@@ -286,14 +349,36 @@ Settles and returns `CallResult<T>`:
 ```ts
 type CallResult<T> = {
   data: T;
-  payment?: { txId?: string; amount?: string; asset?: string };
+  payment?: { txId?: string; amount?: string; usd?: number; asset?: string };
   status: number;
+  attempts?: number;
 };
 ```
 
-Throws `no_signer` if the client was constructed without a key, `price_above_max` if
-the quote exceeds `maxPrice`, and `call_failed` (carrying `status` and the response
-body in `detail`) for any non-2xx.
+`payment.amount` is atomic units of `asset`; `usd` is that converted, when the decimals
+are known.
+
+Throws `no_signer` if the client was constructed without a key, `price_above_max` or
+`daily_cap_reached` if the quote exceeds a cap, `unreadable_quote` if a cap is set and the
+402 could not be decoded, `network_error` when nothing answered, and `call_failed`
+(carrying `status` and the response body in `detail`) for any other non-2xx.
+
+### subscribe()
+
+For endpoints that sell a window rather than a call. Settles once and keeps the key:
+
+```ts
+const sub = await ripar.subscribe("https://api.example.com/feed");
+await ripar.call("https://api.example.com/feed");   // free, until sub.expiresAt
+```
+
+Keys are held **in memory only** — a key is bearer credentials for a window you already
+paid for, so writing it to disk is your decision. `activeSubscriptions` exposes them so
+you can persist them, and `useSubscription(url, key, expiresAt?)` loads one back after a
+restart so the window is not bought twice.
+
+Throws `not_a_subscription` if the endpoint took a payment but issued no key — that means
+it is priced per call, so use `call()`.
 
 ### discover()
 

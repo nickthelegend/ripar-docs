@@ -1,6 +1,6 @@
 export const metadata = {
   title: "Payments & settlement",
-  description: "How a Ripar call becomes USDC in your Algorand address, and what happens when it doesn't.",
+  description: "How a call becomes USDC in your Algorand address, and what happens when it doesn't.",
 };
 
 # Payments & settlement
@@ -8,63 +8,105 @@ export const metadata = {
 ## The path of one payment
 
 1. The caller requests your endpoint with no payment.
-2. Ripar's middleware answers `402` with a quote: amount, asset, destination, nonce and
-   an expiry.
-3. The caller signs a USDC transfer for exactly that quote and retries with `X-PAYMENT`.
-4. The **facilitator** verifies the payment: right amount, right asset, right
-   destination, unexpired, and the nonce has not been used.
-5. Your handler runs.
-6. The response carries `X-Payment-Response` with the transaction id.
+2. The x402 middleware answers `402` with a quote in the `PAYMENT-REQUIRED` header:
+   `accepts[]` carrying amount, asset, network, `payTo`, and a timeout.
+3. The caller decodes it, checks it against its own caps, signs a USDC transfer for
+   exactly that amount, and retries with `PAYMENT-SIGNATURE`.
+4. The **facilitator** verifies the payment before your handler runs.
+5. Your handler runs. Its response is buffered.
+6. If it returned a success status, the facilitator settles and the receipt comes back in
+   `PAYMENT-RESPONSE`.
 
-Settlement is direct: caller → your address. Ripar is never in the path of the funds.
+Settlement is direct: caller → the `payTo` address. Nothing in the middle takes custody.
 
-<Callout type="note" title="Nonces make replay impossible">
-  Each quote carries a single-use nonce. A payment payload cannot be captured and
-  replayed against the same endpoint for a second free call.
+<Callout type="warning" title="Both headers are base64, not JSON">
+  `PAYMENT-REQUIRED` and `PAYMENT-RESPONSE` carry base64-encoded JSON. `JSON.parse` on
+  the raw value throws, and the body of a 402 is usually `{}` — so code that reads the
+  body as the quote gets nothing at all. `PAYMENT-SIGNATURE` is the x402 v2 name for the
+  request header; `X-PAYMENT` is the v1 spelling and is still accepted.
 </Callout>
+
+## Amounts are base units, not dollars
+
+An `accepts` entry that names an `asset` states its `amount` in that asset's **atomic
+units**. `10000` of a 6-decimal USDC is `$0.01`, not `$10,000`. Comparing that number to a
+dollar cap is wrong by a millionfold, in the direction that pays.
+
+The SDK's `priceOf()` does the conversion and returns `null` for an asset whose decimals
+it does not know, rather than assuming six:
+
+```ts
+import { priceOf } from "@ripar/sdk";
+
+const q = await client.quote(url);
+const usd = priceOf(q.requirements); // 0.01 | null
+```
+
+A `null` there is a quote a cap cannot check — `RiparClient` treats it as a refusal, not
+as a zero.
 
 ## What you get paid in
 
-USDC as a native Algorand ASA (asset id `31566704` on MainNet). Not a bridged
-representation and not a wrapped token — the same USDC Circle issues.
+USDC as a native Algorand ASA: asset `31566704` on MainNet, `10458941` on TestNet. Not a
+bridged representation and not a wrapped token — the same USDC Circle issues. The wrong
+id per network is a payment that silently never settles, which is why the SDK exports the
+constants rather than expecting you to type them.
 
 ## Failure cases, and who eats them
 
-The rule is simple: **you are paid when work is delivered.** If it is not delivered, the
-payment does not stand.
+The rule is simple: **you are paid when work is delivered.** If it is not delivered,
+nothing settles — the payment was signed but never captured, so there is no refund to
+wait for.
 
 | What happened | Payment | Notes |
 | --- | --- | --- |
-| Handler returned `2xx` | Captured | Normal path |
-| Handler returned `5xx` | Refunded | The caller is not charged for your outage |
-| Handler timed out | Refunded | Timeout is configurable per endpoint |
-| Payment underpaid the quote | Rejected before the handler | `402` again with the same quote |
-| Quote expired | Rejected | Caller re-requests to get a fresh quote |
-| Same nonce twice | Rejected | Replay protection |
+| Handler returned `2xx` | Settled | Normal path |
+| Handler returned `5xx` or threw | Never settled | The caller is not charged for your outage |
+| Handler exceeded `timeout` | Never settled | `504 handler_timeout`, configurable per endpoint |
+| Failed input validation | Never settled | `400` before the payment middleware is reached |
+| Rate limited | Never settled | `429` before the payment middleware is reached |
+| Payment did not verify | Rejected | `402` again with the quote |
 
 ## Idempotency
 
-A caller that retries after a network blip must not pay twice for one unit of work.
-Attach an idempotency key and Ripar collapses retries onto a single billable execution:
+A caller that retries after a network blip must not pay twice for one unit of work. It is
+an **HTTP header, not a body field**, and it is opt-in on the server:
 
 ```ts
-await ripar.call("summarize", {
-  text: "…",
-  idempotencyKey: "job-8f21c-attempt",
-});
+await serve(agent, { idempotency: { windowMs: 10 * 60_000 } });
 ```
 
-The first call executes and charges. Subsequent calls with the same key inside the
-retention window return the stored response and do **not** charge again.
+```bash
+ripar call https://agent.example.com/summarize \
+  --body '{"text":"…"}' --idempotency-key job-8f21c-attempt
+```
+
+```ts
+await ripar.call(url, body, { headers: { "Idempotency-Key": "job-8f21c-attempt" } });
+```
+
+The first call executes and charges. A retry with the same key and the same body inside
+the window returns the stored response with `Idempotency-Replayed: true` and does **not**
+charge again. A retry that arrives while the first is still running gets `409
+idempotency_in_progress`; the same key with a *different* body gets `409
+idempotency_key_reuse`.
+
+<Callout type="warning" title="The window is in memory, per process">
+  Two replicas keep two stores, and a restart empties both. And the guarantee is exactly
+  "a completed `2xx` is replayed, not re-run" — a request that settled and then lost its
+  socket before writing a response releases its claim, and the retry settles again.
+</Callout>
 
 ## Reconciliation
 
-Every call is written to the execution record with the settling transaction, so
-"where did this month's spend go" is a query:
+Your own process keeps a capped ring buffer of recent calls:
 
 ```bash
-ripar receipts --since 2026-07-01 --format csv > july.csv
+curl -s https://your-host/_ripar/runs | jq '.runs[] | {endpoint, status, ms, txId}'
 ```
 
-Each row carries the request id, the endpoint, the amount, the Algorand transaction id
-and the response status — enough to tie a line of accounting to a block explorer.
+That is 100 entries by default and it is gone on restart, so it is an operational view
+rather than an accounting record. For accounting, read the chain — every settled call is
+an Algorand transaction against your `payTo` address. The [MCP
+server's](/reference/mcp) `ripar_settlements` pulls those from the indexer and marks each
+one against what the ReputationRegistry has counted.

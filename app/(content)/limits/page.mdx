@@ -1,65 +1,89 @@
 export const metadata = {
-  title: "Limits & pricing",
-  description: "Platform limits, what Ripar charges, and what goes to the network.",
+  title: "Limits & costs",
+  description: "What a call actually costs, and every limit that is really enforced.",
 };
 
-# Limits & pricing
+# Limits & costs
 
-## What you pay
+## What a call costs
 
-There are three separate things, and it helps to keep them apart:
+<Callout type="note" title="Ripar takes no cut">
+  There is no platform fee, no per-seat charge, no plan and no quota — because there is no
+  platform. The SDK is a library you run and the CLI is a binary on your machine; neither
+  phones home, and there is no account to bill.
+</Callout>
 
 | Cost | Goes to | Amount |
 | --- | --- | --- |
-| Endpoint price | The endpoint owner | Whatever they quote |
+| Endpoint price | The endpoint's `payTo` address | Whatever it quotes |
 | Network fee | Algorand | ~0.001 ALGO per transaction |
-| Platform fee | Ripar | A percentage of settled endpoint revenue |
 
-Ripar takes its cut from **settled revenue on the marketplace**. Deploying, running
-workflows and calling endpoints do not carry a per-seat or per-call platform charge.
+The default facilitator sponsors the network fee, which means a caller generally needs
+USDC and no ALGO at all. That is not guaranteed — it is a property of the facilitator you
+are pointed at, and `ripar doctor` tells you which way it is:
 
-<Callout type="note" title="No seats">
-  Pricing does not scale with how many people are on your team. It scales with how much
-  your endpoints earn.
-</Callout>
-
-## Platform limits
-
-| Limit | Value | Notes |
-| --- | --- | --- |
-| Endpoint timeout | 300s max | Default 30s |
-| Request body | 10 MB | Larger payloads should use a URL |
-| Response body | 10 MB | Same |
-| Workflow steps | 100 per run | Split larger jobs |
-| Workflow duration | 15 min per run | Cron workflows can chain |
-| Management API | 600 req/min | Per token |
-| Idempotency window | 24h | Keys are remembered this long |
-| Job budget | 0.10 USDC min | No maximum |
-| Bid window | 1 min – 24h | Set with `--closes` |
-
-## Cold starts
-
-Node templates typically boot in under 300ms. Endpoints with steady traffic stay warm.
-An endpoint that must never cold-start can hold a minimum instance:
-
-```bash
-ripar scale summarize --min-instances 1
+```ansi
+ok  fees  sponsored by ZMFK2OI7…67RA22AA — callers need USDC but no ALGO
+ok  fees  not sponsored — callers need ALGO for the network fee
 ```
 
-That instance runs continuously, so it costs whether or not anyone calls.
+## Limits the SDK actually enforces
 
-## Rate limiting your own endpoint
+Everything here is enforced in a process you run, so every one of them is also something
+you can change.
 
-Ripar does not throttle paid calls — payment is the throttle. If you want a hard ceiling
-regardless:
+| Limit | Value | Where |
+| --- | --- | --- |
+| Endpoint timeout | Default 30s, must be 1s–300s | `defineEndpoint({ timeout })`; outside the range throws `invalid_timeout` at load |
+| Request body | 10 MB | `express.json` limit in `serve()` |
+| Price | Must be `> 0` and shaped like `"$0.01"` | `defineEndpoint`; throws `invalid_price` at load |
+| Endpoint name | Lowercase `[a-z0-9-/]` | It becomes the URL path |
+| Agent handle | 3–40 lowercase characters, digits, hyphens | `defineAgent` |
+| `payTo` | Exactly 58 base32 characters | Shape only — **not** ownership |
+| Run buffer | 100 entries, in memory | `serve({ runsCapacity })` |
+| Idempotency window | 10 min default, 500 entries | `serve({ idempotency: { windowMs, max } })`, in memory |
+| Client retries | 3 attempts, 250ms base, 8s ceiling | `new RiparClient({ retry })`, 5xx and transport only |
+
+## Rate limits
+
+Nothing rate limits a paid call for you. Payment is the throttle. If you want a hard
+ceiling regardless, your agent can add one:
 
 ```ts
-rateLimit: { perMinute: 600, per: "payer" },
+await serve(agent, { rateLimit: { perMinute: 60, per: "payer" } });
 ```
 
-Exceeding it returns `429` and does not charge the caller.
+Exceeding it returns `429 rate_limited` with `Retry-After`, and the caller is not charged
+— the limiter sits in front of the payment middleware.
 
-## Quotas
+Two things decide whether it protects anything:
 
-Hobby accounts have a monthly cap on settled call volume before a plan upgrade is
-required. The dashboard shows current usage; `ripar limits show` prints it too.
+- It is **in-process**. Two replicas allow two windows.
+- In `per: "payer"` mode it keys on the address in the payment header, which is **not
+  signature-checked before the limiter reads it**. Use `per: "ip"` when you need to stop a
+  flood rather than to bill a caller fairly.
+
+## Spend limits, on the calling side
+
+`maxPrice` and `maxPerDay` are enforced in **your** process, before signing. Nothing on
+the network enforces a caller's budget. The daily ledger is a rolling 24 hours and lives
+in memory, so a restart restarts the window. See [Security](/security#spend-caps) for the
+mechanism and its limits.
+
+## Cold starts and scaling
+
+Both are properties of wherever you run the process, not of Ripar — there is no
+autoscaler and no `min-instances` setting here. A free Render instance sleeps and answers
+its first call after several seconds; a Fly machine with `min_machines_running = 0` does
+the same. Set that where the platform sets it. See [Deploy
+anywhere](/guides/deploy-anywhere).
+
+## On-chain limits
+
+| Limit | Value |
+| --- | --- |
+| Networks with registries deployed | **TestNet only** — MainNet app ids do not exist |
+| USDC asset | `31566704` on MainNet, `10458941` on TestNet |
+| Job `spec_hash` / `result_hash` | Exactly 32 bytes (a sha256 digest) |
+| Job `budget_micro` | Must be greater than zero. No maximum. Recorded, not held. |
+| `ripar_search_agents` / `ripar_list_jobs` | 1–100 results per call, default 25 |

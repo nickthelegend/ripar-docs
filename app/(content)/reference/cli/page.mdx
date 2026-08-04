@@ -2,66 +2,148 @@ export const metadata = { title: "CLI", description: "Every Ripar CLI command." 
 
 # CLI
 
+The `ripar` command ships **inside `@ripar/sdk`** — there is no separate CLI package, and
+`npm install -g @ripar/cli` will 404. There is no account, no login and no deploy: the
+CLI scaffolds, runs and calls agents, and nothing else.
+
 ```bash
-npm install -g @ripar/cli
+git clone https://github.com/nickthelegend/ripar-sdk && cd ripar-sdk
+npm install && npm run build
+npm link            # puts `ripar` on your PATH
 ```
 
-## Auth
+## Commands
 
 | Command | Does |
 | --- | --- |
-| `ripar login` | Browser login, writes `~/.ripar/config.json` |
-| `ripar logout` | Clears the stored token |
-| `ripar whoami` | Prints the active account and org |
+| `ripar init <name>` | Scaffold a new agent from a template |
+| `ripar dev [entry]` | Run an agent locally |
+| `ripar quote <url>` | Read an endpoint's price — free, no wallet |
+| `ripar call <url>` | Pay for and invoke an endpoint |
+| `ripar manifest <url>` | Print an agent's published manifest |
+| `ripar doctor` | Check node, facilitator, network and payout address |
 
-## Endpoints
+`ripar --help`, `ripar -v`, and `ripar <command> --help` all work. An unknown command
+exits `1` rather than guessing.
 
-| Command | Does |
+## `ripar init`
+
+```bash
+ripar init my-agent --template basic
+```
+
+| Flag | Notes |
 | --- | --- |
-| `ripar init <name>` | Scaffold a project |
-| `ripar deploy` | Build and deploy |
-| `ripar deploy --env staging` | Deploy to a preview environment |
-| `ripar rollback --to <id>` | Roll back to a previous deployment |
-| `ripar logs <name> --follow` | Stream logs |
-| `ripar retire <name>` | Take an endpoint offline |
+| `--template <t>` | `basic`, `llm` or `oracle`. Default `basic`. |
+| `--dir <path>` | Where to create it. Default `./<name>`. |
+| `--force` | Write into a directory that already has files |
 
-## Calling
-
-| Command | Does |
+| Template | What you get |
 | --- | --- |
-| `ripar search <query>` | Search the Bazaar |
-| `ripar call <name> --data <json>` | Call and settle an endpoint |
-| `ripar call … --max-price <amt>` | Refuse quotes above this |
-| `ripar receipts --last <n>` | Recent paid calls |
+| `basic` | One echo endpoint. The smallest thing that can take money. |
+| `llm` | Prompt completion, priced per requested token budget. |
+| `oracle` | Price quotes signed with an Algorand key. |
 
-## Workflows
+The name is slugified into a handle — lowercase, hyphenated, 3–40 characters — so a
+scaffolded project starts valid rather than failing on first run.
 
-| Command | Does |
+## `ripar dev`
+
+```bash
+ripar dev              # finds the entry itself
+ripar dev src/agent.ts # or name one
+```
+
+With no entry it looks for `agent.ts`, `agent.js`, `src/agent.ts`, `src/agent.js`,
+`index.ts`, `index.js`, in that order. TypeScript entries run through Node's own type
+stripping, so there is no build step and no bundler.
+
+| Flag | Notes |
 | --- | --- |
-| `ripar workflows ls` | List workflows |
-| `ripar run <name>` | Trigger manually |
-| `ripar runs <name> --last <n>` | Recent runs |
-| `ripar runs show <id>` | One run, with every step |
+| `--port <n>` | `PORT` for the agent. Default `4021`. |
 
-## Jobs
+`SIGTERM` and `SIGINT` are forwarded to the child rather than killing it first, so the
+agent's own drain runs and in-flight paid calls still get their answers.
 
-| Command | Does |
+## `ripar quote`
+
+```bash
+ripar quote https://api.ripar.io/api/summarize --body '{"text":"…"}'
+```
+
+Needs no wallet and no funds. Send `--body` when the endpoint prices dynamically, because
+the quote depends on what you are asking for — a body with no content type is a body the
+server will not parse, and an unparsed body gets quoted from `{}`.
+
+| Flag | Notes |
 | --- | --- |
-| `ripar jobs create` | Post a job |
-| `ripar jobs bids <id>` | List bids |
-| `ripar jobs accept <id> --bid <agent>` | Accept a bid |
-| `ripar jobs cancel <id>` | Cancel, returning escrow |
+| `--body <json>` | Request body as JSON |
+| `--file <path>` | Request body from a file |
 
-## Config
+An endpoint that answers anything other than `402` is reported as not paid, rather than
+as an error.
 
-| Command | Does |
+## `ripar call`
+
+```bash
+export RIPAR_MNEMONIC="twenty five words …"
+ripar call https://api.ripar.io/api/summarize \
+  --body '{"text":"…"}' --max-price 0.02 --network testnet
+```
+
+The wallet is read from `RIPAR_MNEMONIC` or `WALLET_MNEMONIC`. **There is deliberately no
+`--mnemonic` flag:** a mnemonic on the command line lands in your shell history and in
+the process list.
+
+| Flag | Notes |
 | --- | --- |
-| `ripar config set payout <addr>` | Set the payout address |
-| `ripar env set <k> <v>` | Set a secret |
-| `ripar env ls` | List secret names (never values) |
-| `ripar limits set --per-day <amt>` | Set a spend cap |
+| `--body <json>` | Request body as JSON |
+| `--file <path>` | Request body from a file |
+| `--max-price <$>` | Refuse a quote above this |
+| `--max-per-day <$>` | Refuse once this much is spent in a rolling 24h |
+| `--network <n>` | `mainnet` or `testnet`. Default `mainnet`. |
+| `--retries <n>` | Attempts on 5xx and network errors. Default 3. |
+| `--idempotency-key <k>` | Send `Idempotency-Key` so a retry is not re-charged |
 
-## Global flags
+Both caps are enforced **in this process, before signing** — see
+[Security](/security#spend-caps). The response body goes to stdout; the settlement txId
+and the attempt count go to stderr, so `ripar call … | jq` still works.
 
-`--json` machine-readable output · `--org <slug>` target an org ·
-`--debug` verbose logging · `--no-color` plain output
+## `ripar manifest`
+
+```bash
+ripar manifest https://api.ripar.io
+ripar manifest https://api.ripar.io --json
+```
+
+Reads `/.well-known/ripar.json` — free, and how discovery starts. Prints a table of
+endpoints, prices and descriptions, or the raw manifest with `--json`.
+
+## `ripar doctor`
+
+```bash
+ripar doctor --network testnet
+```
+
+Checks Node's version, that `RIPAR_PAY_TO` is a real Algorand address, that the
+facilitator is reachable, which network id it publishes, whether it sponsors the network
+fee, and which USDC asset settles. Exits non-zero if any check fails.
+
+| Flag | Notes |
+| --- | --- |
+| `--network <n>` | `mainnet` or `testnet`. Default `RIPAR_NETWORK` or `mainnet`. |
+| `--facilitator <u>` | Facilitator base URL |
+| `--pay-to <addr>` | Address to check instead of `RIPAR_PAY_TO` |
+
+Run it before you advertise a URL. An unsponsored facilitator still settles — it just
+means callers need ALGO as well as USDC, which is worth knowing before they find out.
+
+## Environment
+
+| Variable | Read by | Notes |
+| --- | --- | --- |
+| `RIPAR_MNEMONIC` / `WALLET_MNEMONIC` | `call` | The signing key. Never a flag. |
+| `RIPAR_NETWORK` | all | `mainnet` or `testnet` |
+| `RIPAR_FACILITATOR` | `doctor` | Overrides the default facilitator |
+| `RIPAR_PAY_TO` | `doctor`, and your agent | Where settlement lands |
+| `PORT` | `dev` | Default `4021` |

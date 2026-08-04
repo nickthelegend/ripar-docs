@@ -1,179 +1,229 @@
 export const metadata = {
   title: "Quickstart",
-  description: "Ship a paid x402 endpoint on Ripar in about five minutes.",
+  description: "Run a paid x402 endpoint with the Ripar SDK, and prove the payment gate works.",
 };
 
 # Quickstart
 
-By the end of this page you will have a public HTTPS endpoint that charges USDC per
-request and is discoverable by any agent on the network.
+By the end of this page you will have an HTTP endpoint that refuses unpaid requests with
+a USDC price attached, and publishes a manifest any agent can read.
 
-<Callout type="note" title="What you need">
-  Node 20+, an Algorand address to receive funds (Pera, Defly or any wallet), and a
-  Ripar account from [app.ripar.io](https://app.ripar.io).
+<Callout type="warning" title="What Ripar is, and is not">
+  Ripar is an **SDK, a CLI and an MCP server**. There is no hosting platform: nothing
+  here builds, deploys or runs your code for you, and there is no account to create. You
+  run the process; see [Deploy anywhere](/guides/deploy-anywhere) for where to put it.
 </Callout>
 
-## 1 · Install the CLI
+<Callout type="note" title="What you need">
+  Node 20+, git, and an Algorand address to receive funds (Pera, Defly or any wallet).
+</Callout>
+
+## 1 · Install the SDK
+
+`@ripar/sdk` is not on npm yet — `npm install @ripar/sdk` returns a 404. Install it from
+the repository:
 
 ```bash
-npm install -g @ripar/cli
-ripar login
+git clone https://github.com/nickthelegend/ripar-sdk && cd ripar-sdk
+npm install && npm run build
+npm link                    # puts the `ripar` command on your PATH
 ```
 
-`ripar login` opens a browser, and writes a token to `~/.ripar/config.json`. Everything
-below uses that token.
-
-## 2 · Create a project
+The `ripar` command ships **inside the SDK package** — there is no separate CLI package.
+Check it:
 
 ```bash
-ripar init summarize --template node
-cd summarize
+ripar --version
+ripar --help
 ```
 
-The template is an ordinary HTTP handler. There is nothing blockchain-shaped about it —
-that is the point:
+## 2 · Scaffold an agent
 
-<LangTabs labels={["TypeScript", "Python"]}>
+```bash
+ripar init my-agent --template basic
+cd my-agent
+npm install
+npm link @ripar/sdk         # while the package is unpublished
+```
 
-```ts title="src/index.ts"
-import { defineEndpoint } from "@ripar/sdk";
+`--template` takes `basic` (one echo endpoint), `llm` (completion, priced per requested
+token budget) or `oracle` (price quotes signed with an Algorand key).
 
-export default defineEndpoint({
-  name: "summarize",
+The scaffolded `agent.ts` is an ordinary HTTP handler — there is nothing
+blockchain-shaped about it, and that is the point:
+
+```ts title="agent.ts"
+import { defineAgent, defineEndpoint, serve } from "@ripar/sdk";
+
+const echo = defineEndpoint({
+  name: "echo",
+  description: "Returns the text it was given, priced per call.",
   // What a caller pays, per request, in USDC.
-  price: "$0.01",
-  handler: ({ body }) => {
+  price: "$0.001",
+  input: {
+    type: "object",
+    properties: { text: { type: "string", minLength: 1, maxLength: 5000 } },
+    required: ["text"],
+    additionalProperties: false,
+  },
+  handler: ({ body, log }) => {
     const { text } = body as { text: string };
-    return { summary: text.slice(0, 280) };
+    log("echoing", { chars: text.length });
+    return { echoed: text, chars: text.length };
   },
 });
+
+await serve(
+  defineAgent({
+    name: "My Agent",
+    handle: "my-agent",
+    description: "An agent scaffolded with `ripar init`.",
+    // Settlement lands here directly — no Ripar account holds it on the way.
+    payTo: process.env.RIPAR_PAY_TO!,
+    network: (process.env.RIPAR_NETWORK as "mainnet" | "testnet") ?? "testnet",
+    endpoints: [echo],
+  }),
+  { port: Number(process.env.PORT ?? 4021) }
+);
 ```
 
-```python title="main.py"
-from ripar import define_endpoint
-
-# What a caller pays, per request, in USDC.
-@define_endpoint(name="summarize", price="$0.01")
-def summarize(body):
-    return {"summary": body["text"][:280]}
-```
-
-</LangTabs>
-
-Every option on `defineEndpoint` — timeouts, input schemas, private endpoints — is in
-the [SDK reference](/reference/sdk).
+Every option on `defineEndpoint` and `serve` is in the [SDK reference](/reference/sdk).
 
 ## 3 · Set where you get paid
 
+`payTo` comes from the environment, not from a config command:
+
 ```bash
-ripar config set payout ADDR…YOUR_ALGORAND_ADDRESS
+cp .env.example .env
+# RIPAR_PAY_TO=YOUR_ALGORAND_ADDRESS
+# RIPAR_NETWORK=testnet
 ```
 
 <Callout type="warning" title="Ripar never holds your balance">
-  Payments settle directly from the caller to the address you set here. Ripar routes,
-  prices, verifies and records — it is never a custodian. See [Custody
+  Payments settle directly from the caller to the address in `RIPAR_PAY_TO`. Nothing in
+  this stack takes custody, and the server process holds no key at all. See [Custody
   model](/concepts/custody).
 </Callout>
 
-## 4 · Deploy
+Check the environment before you advertise a URL:
 
 ```bash
-ripar deploy
+ripar doctor --network testnet
 ```
 
 ```ansi title="output"
-✓ built            summarize
-✓ endpoint         https://api.ripar.io/a/summarize
-✓ payout address   ADDR…K7QX
-✓ price            0.01 USDC / request
-✓ listed           x402 Bazaar
-● live
+ok    node         v22.14.0
+ok    payTo        KBDRZK3B…KEISKQ
+ok    facilitator  https://facilitator.goplausible.xyz
+ok    network      algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=
+ok    fees         sponsored by ZMFK2OI7…67RA22AA — callers need USDC but no ALGO
+ok    asset        USDC 10458941 on testnet
 ```
 
-## 5 · Call it and watch it charge
-
-An unpaid request is refused with the price attached:
+## 4 · Run it
 
 ```bash
-curl -i https://api.ripar.io/a/summarize \
+ripar dev
+```
+
+```ansi title="output"
+ripar dev · node agent.ts (PORT=4021)
+ripar · my-agent on :4021 (testnet)
+  POST /echo  $0.001
+  GET /.well-known/ripar.json
+  GET /metrics · GET /_ripar/runs · GET /health   (unpaid)
+```
+
+`ripar dev` runs TypeScript directly through Node's own type stripping — no build step
+and no bundler.
+
+## 5 · Prove the gate works
+
+An unpaid request must be refused with the price attached:
+
+```bash
+curl -i -X POST http://localhost:4021/echo \
   -H 'content-type: application/json' \
-  -d '{"text":"..."}'
+  -d '{"text":"hello"}'
 ```
 
 ```http
 HTTP/1.1 402 Payment Required
-X-Payment-Required: {"amount":"0.01","asset":"USDC","network":"algorand","payTo":"ADDR…K7QX"}
+PAYMENT-REQUIRED: <base64 JSON: accepts[].amount, asset, network, payTo>
 ```
 
-Retry it with a client that handles the payment leg for you. The handshake is
-identical in every language — only the wrapper differs:
+A `200` here means the middleware is not in front of your route and you are giving the
+work away.
 
-<LangTabs>
+The requirements travel **base64-encoded in the `PAYMENT-REQUIRED` header**, not as
+plain JSON in the body. Read them with the CLI, which decodes for you:
+
+```bash
+ripar quote http://localhost:4021/echo --body '{"text":"hello"}'
+```
+
+```ansi title="output"
+http://localhost:4021/echo
+  price     $0.001
+  network   algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=
+  payTo     KBDRZK3BV2YFJJAVV3S5XQYDWU4RDDI6EDXXKMG3O4AEVPEDCETDKEISKQ
+
+Quoting is free and needs no wallet. `ripar call` pays it.
+```
+
+## 6 · Pay it
+
+`ripar call` does both legs — quote, sign, retry. The wallet comes from the environment;
+there is deliberately no `--mnemonic` flag, because it would land in your shell history
+and in `ps`.
+
+```bash
+export RIPAR_MNEMONIC="twenty five words …"
+ripar call http://localhost:4021/echo \
+  --body '{"text":"hello"}' \
+  --max-price 0.01 \
+  --network testnet
+```
+
+Or in code:
 
 ```ts title="pay.ts"
 import { RiparClient } from "@ripar/sdk";
 
 const ripar = new RiparClient({
-  mnemonic: process.env.RIPAR_WALLET_MNEMONIC,
-  maxPrice: "0.02", // refuse anything above this, whatever the quote says
+  mnemonic: process.env.RIPAR_MNEMONIC,
+  network: "testnet",
+  maxPrice: "0.01", // this client refuses anything above it — see /security
 });
 
-const res = await ripar.call("https://api.ripar.io/a/summarize", {
-  text: "a long article…",
-});
+const res = await ripar.call("http://localhost:4021/echo", { text: "hello" });
 
-console.log(res.data);         // { summary: "…" }
+console.log(res.data);          // { echoed: "hello", chars: 5 }
 console.log(res.payment?.txId); // 7A2F…9C1B
 ```
 
-```python title="pay.py"
-import os
-from ripar import RiparClient
-
-ripar = RiparClient(
-    mnemonic=os.environ["RIPAR_WALLET_MNEMONIC"],
-    max_price="0.02",  # refuse anything above this, whatever the quote says
-)
-
-res = ripar.call("https://api.ripar.io/a/summarize", {"text": "a long article…"})
-
-print(res.data)          # {"summary": "…"}
-print(res.payment.tx_id) # 7A2F…9C1B
-```
-
-```bash title="pay.sh"
-# curl can carry a payment header but cannot produce one — signing needs a key.
-# Take the header from a client, or let `ripar call` do both legs at once:
-#   ripar call summarize --data '{"text":"a long article…"}'
-curl -s https://api.ripar.io/a/summarize \
-  -H 'content-type: application/json' \
-  -H "X-PAYMENT: $RIPAR_PAYMENT" \
-  -d '{"text":"a long article…"}'
-```
-
-</LangTabs>
-
-```ansi title="output"
-→ 402  price 0.01 USDC
-→ paid 0.01 USDC  tx 7A2F…9C1B  (2.8s)
-← 200  {"summary":"…"}
-```
-
-That transaction is on Algorand MainNet. The USDC is in your wallet, not in an account
+That transaction is on Algorand. The USDC lands in the `payTo` wallet, not in an account
 on Ripar waiting for a payout run.
 
 ## What just happened
 
-1. Your handler was packaged and given a public HTTPS route.
-2. Ripar wrapped it in x402 middleware that refuses unpaid calls with a price.
-3. The endpoint was registered with the Bazaar so agents can discover its schema.
-4. A caller paid, the facilitator verified, and your handler ran exactly once.
+1. `serve()` wrapped your handler in x402 middleware that refuses unpaid calls with a price.
+2. It also mounted a free manifest at `/.well-known/ripar.json`, so a caller can learn
+   the price and input schema before paying anything.
+3. A caller quoted, signed a USDC transfer for exactly that amount, and retried.
+4. The facilitator verified it, your handler ran, and settlement went caller → `payTo`.
+
+<Callout type="note" title="Nothing listed you anywhere">
+  Running an agent does not publish it. Discovery is a separate, manual step — and the
+  SDK's `registerWithBazaar` helper currently posts to an endpoint that returns 404. See
+  [Discovery](/concepts/discovery) for what actually works today.
+</Callout>
 
 <Cards>
-  <Card title="Build a workflow" href="/guides/workflows">
-    Give it triggers, conditions and guaranteed retries.
+  <Card title="Your first payment" href="/first-payment">
+    Be the caller instead: quote a live endpoint, settle it, read the receipt.
   </Card>
-  <Card title="Sell on the marketplace" href="/guides/marketplace">
-    Pricing models, revenue share, and getting found.
+  <Card title="Deploy anywhere" href="/guides/deploy-anywhere">
+    Railway, Render, Fly.io, Heroku or a container you run yourself.
   </Card>
 </Cards>

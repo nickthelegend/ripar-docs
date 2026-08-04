@@ -2,65 +2,106 @@ export const metadata = { title: "Errors", description: "Every Ripar error code 
 
 # Errors
 
-Errors return a stable `code`. Match on that, never on `message`:
+There are two families, and they are raised in different places: **HTTP errors** an agent
+returns over the wire, and **`RiparError` codes** the SDK throws in your own process.
+
+Both carry a stable `code`. Match on that, never on `message`.
 
 ```json
 {
   "error": {
-    "code": "quote_expired",
-    "message": "The payment quote expired at 2026-07-14T09:00:00Z.",
-    "requestId": "req_8f21c"
+    "code": "invalid_input",
+    "message": "text is required.",
+    "field": "text",
+    "schema": { "type": "object", "required": ["text"] }
   }
 }
 ```
 
-<Callout type="tip" title="Always log the requestId">
-  `requestId` ties your log line to the full execution record. It is the first thing
-  support will ask for, and it is the fastest way to find a call yourself.
+## HTTP errors from an agent
+
+| Code | HTTP | Meaning | Do this |
+| --- | --- | --- | --- |
+| `invalid_input` | 400 | Body failed the published input schema | Fix the request against the `schema` echoed back |
+| `rate_limited` | 429 | Over the agent's `perMinute` for this payer or IP | Back off per `Retry-After` |
+| `idempotency_in_progress` | 409 | A request with this `Idempotency-Key` is still running | Retry shortly |
+| `idempotency_key_reuse` | 409 | Same key, different body | Use a new key |
+| `handler_error` | 500 | The handler threw | Nothing settled. Check the agent's logs. |
+| `handler_timeout` | 504 | Exceeded the endpoint's `timeout` | Nothing settled. Raise `timeout` or make the work smaller. |
+| `shutting_down` | 503 | The agent got `SIGTERM` and is draining | Retry in a few seconds, per `Retry-After` |
+| `not_found` | 404 | No such endpoint on this agent | Check the manifest for real endpoint names |
+
+A `402` carries no `code` — the quote is in the `PAYMENT-REQUIRED` header and the body is
+`{}`. See [Payments & settlement](/concepts/payments).
+
+<Callout type="note" title="Anything but 2xx means nothing settled">
+  The payment middleware buffers the response and cancels settlement on a `4xx` or `5xx`,
+  so every error above leaves the caller uncharged. There is no refund to chase.
 </Callout>
 
-## Payment errors
+## `RiparError` codes
 
-| Code | HTTP | Meaning | Do this |
-| --- | --- | --- | --- |
-| `payment_required` | 402 | No payment attached | Read the quote and retry with `X-PAYMENT` |
-| `quote_expired` | 402 | Quote passed its expiry | Re-request to get a fresh quote |
-| `underpaid` | 402 | Amount below the quote | Pay the quoted amount exactly |
-| `nonce_reused` | 409 | Payload already used | Get a new quote; never replay one |
-| `price_above_max` | 400 | Quote exceeded your `maxPrice` | Raise the cap or pick another endpoint |
-| `insufficient_funds` | 402 | Wallet cannot cover it | Top up USDC, and keep ALGO for fees |
-| `settlement_failed` | 502 | Payment did not confirm | Safe to retry — nothing was captured |
+Every failure the SDK raises is a `RiparError`, so one `catch` covers definition, serving
+and calling:
 
-## Execution errors
+```ts
+import { RiparError } from "@ripar/sdk";
 
-| Code | HTTP | Meaning | Do this |
-| --- | --- | --- | --- |
-| `handler_error` | 500 | Your handler threw | Check `ripar logs`; the caller was refunded |
-| `handler_timeout` | 504 | Exceeded the timeout | Raise `timeout` or make the work smaller |
-| `invalid_input` | 400 | Failed the input schema | Fix the request against the published schema |
-| `endpoint_retired` | 410 | Endpoint is gone | Move to the current version |
-| `cold_start_failed` | 503 | Instance failed to boot | Retry; persistent means a bad build |
+try {
+  await ripar.call(url, body);
+} catch (err) {
+  if (err instanceof RiparError && err.code === "price_above_max") {
+    // the quote moved; re-quote or skip the call
+  }
+  throw err;
+}
+```
 
-## Job errors
+| Property | Type | Notes |
+| --- | --- | --- |
+| `code` | `string` | Stable identifier — branch on this |
+| `status` | `number \| undefined` | HTTP status, when the failure came from a response |
+| `detail` | `unknown` | Response body or payment requirements, when there were any |
 
-| Code | HTTP | Meaning | Do this |
-| --- | --- | --- | --- |
-| `verification_failed` | 200 | Result did not meet the spec | Escrow held; re-open or refund |
-| `job_expired` | 410 | Closed with no accepted bid | Escrow returned automatically |
-| `bid_too_high` | 400 | Bid exceeded the budget | Bid under the budget |
-| `escrow_locked` | 409 | Job already accepted | Wait for the outcome |
+### At definition time
 
-## Auth and limits
+These throw at module load, not at request time, so a bad definition fails the build
+rather than the first paying customer.
 
-| Code | HTTP | Meaning | Do this |
-| --- | --- | --- | --- |
-| `unauthorized` | 401 | Missing or bad token | Re-run `ripar login` |
-| `forbidden` | 403 | Token lacks scope | Use a token with the right scope |
-| `rate_limited` | 429 | Too many management calls | Back off per `Retry-After` |
-| `spend_cap_reached` | 402 | Daily cap hit | Raise the cap deliberately, or wait |
+| Code | Cause |
+| --- | --- |
+| `invalid_name` | Endpoint name is not lowercase `[a-z0-9-/]` — it becomes the URL path |
+| `invalid_price` | Not a positive USD amount like `"$0.01"` |
+| `invalid_timeout` | Outside 1,000–300,000 ms |
+| `invalid_endpoint` | No `handler` function |
+| `invalid_agent` | The agent declares no endpoints |
+| `invalid_handle` | Handle is not 3–40 lowercase characters, digits or hyphens |
+| `invalid_address` | `payTo` is not 58 base32 characters |
+| `duplicate_endpoint` | Two endpoints share a name, so they would share a URL |
+
+### While calling
+
+| Code | Cause | Do this |
+| --- | --- | --- |
+| `no_signer` | The client was built without a `mnemonic` or `secretKey` | It can quote, but not pay. Give it a key. |
+| `price_above_max` | The quote exceeded your `maxPrice` | Raise the cap deliberately, or pick another endpoint |
+| `daily_cap_reached` | `maxPerDay` is spent for this rolling 24h | Wait, or raise it deliberately |
+| `unreadable_quote` | A cap is set and the 402 could not be decoded | The client refuses to pay blind. Check the endpoint's headers. |
+| `invalid_max_price` | `maxPrice` or `maxPerDay` is not a positive number | Fix the client options |
+| `network_error` | The request never reached the server | Safe to retry; nothing settled |
+| `call_failed` | Non-2xx response; `status` and body are on the error | Depends on the status — see the table above |
+| `not_a_subscription` | `subscribe()` paid, but no key came back | The endpoint is priced per call. Use `call()`. |
+| `no_manifest` | `discover()` found no `/.well-known/ripar.json` | Check the host and that the path is unpaid |
 
 ## Retrying safely
 
-`settlement_failed`, `cold_start_failed` and `rate_limited` are safe to retry. Anything
-that already ran your handler is not — retry those only with the same
+`RiparClient` retries on 5xx and transport failures only — never on a 4xx, which is the
+server saying the request itself is wrong. Three attempts by default:
+
+```ts
+new RiparClient({ mnemonic, retry: { attempts: 5 } });
+new RiparClient({ mnemonic, retry: false });          // never retry
+```
+
+Anything that already ran a handler should only be retried with the same
 [idempotency key](/concepts/payments#idempotency), or you will pay twice.

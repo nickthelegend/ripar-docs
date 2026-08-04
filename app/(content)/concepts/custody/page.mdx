@@ -1,51 +1,68 @@
 export const metadata = {
   title: "Custody model",
-  description: "Where the money sits at every point in a Ripar transaction. Short answer: not with Ripar.",
+  description: "Where the money sits at every point in a Ripar transaction. Short answer: it never moves anywhere unexpected.",
 };
 
 # Custody model
 
-Ripar is **non-custodial**. It is worth being precise about what that means, because the
-word gets used loosely.
+Ripar is **non-custodial**, and in a stronger sense than the word usually carries: there
+is no Ripar-operated service in the payment path at all. The SDK is a library you run,
+and settlement is a direct USDC transfer between two Algorand addresses.
 
 ## Where funds actually sit
 
 | Moment | Who holds the funds |
 | --- | --- |
 | Before a call | The caller's wallet |
-| During verification | Still the caller's wallet — nothing has moved |
-| On settlement | Your Algorand address, directly |
-| Orchestrator job, posted | A smart-contract escrow |
-| Orchestrator job, verified | The winning agent's address |
+| While the endpoint quotes | Still the caller's wallet — nothing has moved |
+| While the facilitator verifies | Still the caller's wallet |
+| On settlement | The `payTo` address, directly |
+| If the handler fails | The caller's wallet — nothing was ever taken |
 
-At no point does a Ripar-controlled account hold your balance. There is no "available
-balance" to withdraw, because the money was never routed through us.
+The last row is the one worth internalising. `@x402/express` buffers the response and
+only settles after the handler returns a success status; a `4xx` or `5xx` **cancels
+settlement**. So a failed call is not refunded, it is never charged in the first place.
+
+## What holds no funds
+
+- **Your agent process.** It needs no wallet and no signing key. A compromised container
+  cannot move your money, because the money never passes through it.
+- **The registries.** The three Algorand contracts — identity, reputation, validation —
+  hold no assets. The ValidationRegistry records a job's `budget_micro` as a number in a
+  box; it never receives, holds or transfers USDC.
+- **The facilitator.** It verifies and submits the transfer the caller signed. It is not a
+  destination.
+
+<Callout type="warning" title="There is no escrow">
+  A job's budget is a **recorded number, not locked funds.** The ValidationRegistry has
+  no method that takes custody of an asset and no release path — nothing "unlocks" when a
+  result verifies, and nothing "returns" when a job is cancelled. A validator's verdict
+  changes a status byte on chain and nothing else. Payment for a job is an ordinary
+  transfer the client makes, on whatever terms the two parties agreed off-chain. See
+  [Jobs & validation](/guides/jobs).
+</Callout>
 
 ## What Ripar does hold
 
-- **Metadata** — endpoints, prices, schemas, execution records, receipts.
-- **Your session token** — for the dashboard and CLI. It authorises API operations, not
-  transfers.
+Nothing of yours. There is no account, no session token and no server-side record —
+because there is no server. The metadata that exists is either in your own process (the
+run buffer, the metrics counters) or on a public chain (the registry boxes), and the
+latter is readable by anyone, including you, without going through us.
 
 ## Keys
 
-Signing happens in your wallet or in an enclave-backed signer you control. Private keys
-are never transmitted to Ripar's servers and never stored there.
+Signing happens where the key already is:
+
+- **Earning side:** no key. `serve()` never signs anything.
+- **Paying side:** `RiparClient` signs in your process, from a mnemonic or secret key you
+  supply through the environment.
+- **On-chain writes:** the [MCP server](/reference/mcp) composes transactions and returns
+  them **unsigned**. A human or wallet signs and broadcasts.
 
 <Callout type="warning" title="What this does not protect you from">
-  Non-custodial means we cannot take your funds or lose them in an exchange failure. It
-  does not mean an agent you configured badly cannot spend them. That is what
-  [spend caps](/security#spend-caps) and `maxPrice` are for — use both.
+  Non-custodial means nobody can take your funds or lose them in someone else's failure.
+  It does not mean an agent you configured badly cannot spend them, and it does not mean
+  a wrong `payTo` can be recovered — `defineAgent` checks that an address is 58 base32
+  characters, not that it is yours. Paste it from your wallet, never retype it. See
+  [spend caps](/security#spend-caps), and note where they are enforced.
 </Callout>
-
-## Escrow, specifically
-
-Orchestrator jobs are the one case where funds leave the poster before work is done.
-They go into a smart contract, not to Ripar:
-
-- Funds lock when the job is posted.
-- They release to the winning agent when the result verifies.
-- They return to the poster if the job expires with no accepted result.
-
-The release condition is enforced by the contract. Ripar cannot redirect an escrow, and
-cannot release one against an unverified result.

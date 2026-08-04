@@ -1,80 +1,138 @@
 export const metadata = {
   title: "Security",
-  description: "Keys, escrow, spend caps and attribution — what protects you and what does not.",
+  description: "Keys, spend caps, where enforcement actually lives, and what none of it protects you from.",
 };
 
 # Security
 
 ## Keys stay yours
 
-Signing happens in your wallet or an enclave-backed signer you control. Private keys are
-never transmitted to Ripar and never stored there. See [Custody
+Signing happens in your own process or wallet. There is no Ripar server to transmit a key
+to — the SDK is a library, and an agent serving paid endpoints holds no key at all,
+because settlement goes caller → `payTo` without the server touching it. See [Custody
 model](/concepts/custody).
+
+The one place a key does appear is the **calling** side: `RiparClient` takes a `mnemonic`
+or a `secretKey` and signs in-process. Keep it in the environment, never on a command
+line — that is why `ripar call` has no `--mnemonic` flag.
 
 ## Spend caps
 
-The single most important control when something autonomous holds a wallet. Caps are
-enforced server-side, so an agent cannot raise its own ceiling.
+<Callout type="warning" title="Caps are enforced in the caller's own process. Nothing enforces them for you.">
+  `maxPrice` and `maxPerDay` live in `RiparClient` and are checked in the process that
+  holds the wallet, before it signs. **No server, facilitator or contract enforces a
+  caller's budget** — there is nothing on the network that knows what your budget is. A
+  cap you did not set is a cap that does not exist, and a second process using the same
+  mnemonic has its own separate counter.
+</Callout>
 
-```bash
-ripar limits set --per-day 5.00
-ripar limits set --per-run 0.25 --workflow liquidation-guard
-ripar limits set --per-call 0.05 --agent research-bot
+Set them where the key is:
+
+```ts
+import { RiparClient } from "@ripar/sdk";
+
+const ripar = new RiparClient({
+  mnemonic: process.env.RIPAR_MNEMONIC,
+  maxPrice: "0.02",   // refuse any single quote above this
+  maxPerDay: "5.00",  // refuse once this much is spent in a rolling 24h
+});
 ```
 
-They compose — a call must satisfy every cap that applies to it.
+or on the command line:
 
-| Scope | Flag | Guards against |
+```bash
+ripar call https://agent.example.com/summarize \
+  --body '{"text":"…"}' --max-price 0.02 --max-per-day 5.00
+```
+
+| Cap | Where it lives | Guards against |
 | --- | --- | --- |
-| Per call | `--per-call` | One absurdly-priced endpoint |
-| Per run | `--per-run` | A workflow looping inside a single run |
-| Per day | `--per-day` | Slow drift nobody notices |
-| Per agent | `--agent` | One misbehaving agent among many |
+| `maxPrice` | `RiparClient`, in your process | One absurdly-priced endpoint |
+| `maxPerDay` | `SpendLedger`, in your process, in memory | Slow drift nobody notices |
+
+How they actually work, because the mechanism decides what they are worth:
+
+- **The quote is read before anything is signed.** `call()` fetches the 402 first,
+  decodes it, and throws `price_above_max` or `daily_cap_reached` rather than paying.
+  Without a cap set, the wrapped fetch settles whatever it is quoted.
+- **An unreadable quote fails closed.** If a cap is set and the 402 cannot be decoded,
+  the client throws `unreadable_quote` instead of paying blind.
+- **The day is a rolling 24 hours, not a calendar day.** A calendar cap resets at
+  midnight, so a retry loop drains twice the budget across the boundary and shows two
+  normal-looking days.
+- **The ledger is in memory.** Restart the process and the window restarts with it. It is
+  a guard, not a guarantee.
 
 <Callout type="warning" title="Caps are the backstop, not the plan">
   A cap turns an unbounded loss into a bounded one. It does not make an agent correct.
-  Pair caps with `maxPrice` on every call and validation on every response.
+  Pair it with validation on every response, and fund a dedicated wallet rather than
+  pointing an autonomous process at your treasury.
 </Callout>
 
-## Escrow
+## Rate limiting, on the earning side
 
-Orchestrator budgets sit in a smart contract, not with Ripar, and release only against a
-verified result. Ripar cannot redirect an escrow or release one that failed
-verification. A job that expires unaccepted returns its escrow automatically.
+`serve()` can cap how often one caller invokes your paid endpoints, keyed on the Algorand
+address inside the payment header — so a caller cannot get a fresh budget by changing IP:
+
+```ts
+await serve(agent, { rateLimit: { perMinute: 60, per: "payer" } });
+```
+
+Two caveats that decide whether this protects anything:
+
+- It is **in-process**. Two replicas allow two windows.
+- The payment header is **not signature-checked before the limiter reads it**, so the
+  payer identity is a claim rather than proof. See the known-gap note in the SDK's
+  `src/identity.ts` before relying on it to isolate one caller from another.
+
+`per: "ip"` keys on the socket address instead and counts every request to a paid route,
+which is the mode that stops a flood from one host.
+
+## What runs before payment
+
+Order is `rate limit → idempotency → input validation → payment → handler`, and the
+position is the feature: **a request rejected by any of the first three has not been
+charged**, because the payment middleware was never reached.
+
+Idempotency is opt-in and in-process:
+
+```ts
+await serve(agent, { idempotency: { windowMs: 10 * 60_000 } });
+```
+
+The guarantee is exactly "a completed `2xx` is replayed, not re-run". It is not "a dropped
+connection can never be charged twice" — a request that settled and then lost its socket
+before writing a response releases its claim, and the retry does settle again.
 
 ## Attribution
 
-Every payment carries the request it paid for. An audit is a query:
+Every settled call carries the transaction that paid for it. A running agent keeps the
+last calls in a ring buffer:
 
 ```bash
-ripar receipts --since 2026-07-01 --format csv
+curl -s https://your-host/_ripar/runs | jq '.runs[] | {endpoint, status, ms, txId}'
 ```
 
-Each row ties a request id to an endpoint, an amount, an Algorand transaction and a
-response status.
-
-## Secrets
-
-Set per environment, never committed:
-
-```bash
-ripar env set OPENAI_API_KEY sk-… --env production
-```
-
-Values cannot be read back through the API or the CLI once set — `ripar env ls` returns
-names only. Rotate with `ripar env set` again; the new value applies on next deploy.
+That is in-memory and capped (100 by default), so it is an operational view, not an
+accounting record. For accounting, read the chain: the [MCP
+server's](/reference/mcp) `ripar_settlements` lists real USDC transfers for an address
+from the Algorand indexer.
 
 ## Reporting a vulnerability
 
-Email `security@ripar.io`. Please include reproduction steps and give us a reasonable
-window before disclosure.
+Email `security@ripar.io`. Please include reproduction steps and give a reasonable window
+before disclosure.
 
 ## What this does not cover
 
 Being honest about the boundary:
 
-- **Endpoint quality.** Anyone can list on the Bazaar. Ranking reflects observed
-  behaviour, not an audit. Validate what you get back.
+- **Endpoint quality.** Anyone can serve an x402 endpoint. Nothing audits it, and there
+  is no ranking system that would filter one out. Validate what you get back.
+- **On-chain reputation.** A score in the ReputationRegistry is keyed to a payment
+  transaction id and cannot be double-counted, but the contract does not verify that the
+  id names a real transfer. Treat a score as a claim recorded on chain, not one proven by
+  it — cross-check with `ripar_settlements`.
 - **Prompt injection.** If your agent feeds untrusted text to an LLM that can call paid
-  endpoints, spend caps bound the damage — they do not prevent the call.
-- **Your own handler.** Code you deploy runs with the secrets you give it.
+  endpoints, `maxPrice` bounds the damage per call — it does not prevent the call.
+- **Your own handler.** Code you run holds the secrets you give it.

@@ -1,110 +1,189 @@
 export const metadata = {
-  title: "REST API",
-  description: "Every Ripar HTTP endpoint: auth, parameters, responses.",
+  title: "Agent HTTP API",
+  description: "Every route a Ripar agent serves: manifest, agent card, A2A, paid endpoints and health.",
 };
 
-# REST API
+# Agent HTTP API
 
-Base URL: `https://api.ripar.io/v1`
-
-## Authentication
-
-Management calls use a bearer token from the dashboard:
-
-```bash
-curl https://api.ripar.io/v1/endpoints \
-  -H "Authorization: Bearer rpr_…"
-```
-
-<Callout type="note" title="Two different kinds of auth">
-  A **bearer token** authorises management (deploying, reading receipts). Calling a paid
-  endpoint needs no token at all — it needs a **payment**. That is the whole point of
-  [x402](/concepts/x402).
+<Callout type="warning" title="There is no management REST API">
+  There is no `api.ripar.io/v1`, no bearer token, and no dashboard-issued credential —
+  `GET https://api.ripar.io/v1/agents` returns `404`. `api.ripar.io` is not a control
+  plane; it is **a deployed agent**, serving the same routes your own agent serves. Every
+  route below is one an agent exposes about itself.
 </Callout>
 
-## Endpoints
+The reference agent lives at `https://api.ripar.io` on Algorand **TestNet**. An agent you
+run with [`serve()`](/reference/sdk#serve) exposes the same shape on its own host.
 
-<Endpoint method="GET" path="/v1/endpoints" />
+## Free routes
 
-List your endpoints.
+Everything a stranger needs in order to decide whether to pay is unpaid. Charging for
+discovery would mean paying to find out whether something is worth paying for.
 
-| Param | Type | Default | Notes |
-| --- | --- | --- | --- |
-| `limit` | int | 50 | Max 200 |
-| `cursor` | string | — | From `nextCursor` |
-| `status` | string | — | `live`, `draft`, `retired` |
+<Endpoint method="GET" path="/.well-known/ripar.json" />
+
+The Ripar manifest: who the agent is, where settlement goes, and every listed endpoint
+with its price and input schema.
 
 ```json title="200 OK"
 {
-  "data": [
+  "name": "Ripar Text Tools",
+  "handle": "ripar-text-tools",
+  "network": "testnet",
+  "payTo": "KBDRZK3BV2YFJJAVV3S5XQYDWU4RDDI6EDXXKMG3O4AEVPEDCETDKEISKQ",
+  "endpoints": [
     {
-      "id": "ep_8f21c",
       "name": "summarize",
-      "url": "https://api.ripar.io/a/summarize",
-      "price": { "amount": "0.01", "asset": "USDC" },
-      "status": "live",
-      "calls24h": 12480
+      "url": "https://api.ripar.io/api/summarize",
+      "method": "POST",
+      "price": "$0.01",
+      "input": { "type": "object", "required": ["text"] }
     }
   ],
-  "nextCursor": null
+  "x402": {
+    "facilitator": "https://facilitator.goplausible.xyz",
+    "network": "algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=",
+    "asset": { "id": 10458941, "symbol": "USDC", "decimals": 6 }
+  }
 }
 ```
 
-<Endpoint method="POST" path="/v1/endpoints" />
+Endpoints defined with `listed: false` are absent — they stay payable, they are just not
+advertised.
 
-Create an endpoint. Body takes `name`, `price`, `input` and `timeout`.
+<Endpoint method="GET" path="/.well-known/agent.json" />
 
-<Endpoint method="DELETE" path="/v1/endpoints/{id}" />
+The **A2A agent card**. Same agent, described for agent-to-agent discovery rather than
+for Ripar's own client. Its `capabilities.extensions` carry three things worth knowing
+about:
 
-Retire an endpoint. In-flight calls drain; new calls get `410`.
+| Extension URI | What it declares |
+| --- | --- |
+| `https://ripar.io/a2a/ext/x402/v1` | Per-skill prices in base units, the facilitator, the network and `payTo` |
+| `https://ripar.io/a2a/ext/registry/v1` | The on-chain identity: `agentId`, and the identity/reputation/validation app ids |
+| `https://ripar.io/a2a/ext/mcp/v1` | The [MCP server](/reference/mcp) this agent exposes, and the exact tool names a peer will find |
 
-## Workflows
-
-<Endpoint method="POST" path="/v1/workflows" />
-<Endpoint method="GET" path="/v1/workflows/{id}/runs" />
+<Endpoint method="GET" path="/api/health" />
 
 ```json title="200 OK"
 {
-  "data": [
+  "ok": true,
+  "agent": "ripar-text-tools",
+  "payTo": "KBDRZK3BV2YFJJAVV3S5XQYDWU4RDDI6EDXXKMG3O4AEVPEDCETDKEISKQ",
+  "facilitator": "https://facilitator.goplausible.xyz",
+  "network": "algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI="
+}
+```
+
+Agents built with the SDK serve this at `GET /health` instead, alongside `GET /metrics`
+(Prometheus) and `GET /_ripar/runs` (the last calls). See the [SDK
+reference](/reference/sdk#what-gets-mounted).
+
+## Paid routes
+
+<Endpoint method="POST" path="/api/summarize" />
+
+Takes `{ "text": string, "max"?: number }`. Costs `$0.01`. An unpaid call is refused:
+
+```bash
+curl -i -X POST https://api.ripar.io/api/summarize \
+  -H 'content-type: application/json' \
+  -d '{"text":"a long article…"}'
+```
+
+```http
+HTTP/2 402
+payment-required: eyJ4NDAyVmVyc2lvbiI6MiwiZXJyb3IiOiJQYXltZW50IHJlcXVpcmVk…
+content-type: application/json
+
+{}
+```
+
+<Callout type="warning" title="The quote is in the header, base64, and the body is empty">
+  `PAYMENT-REQUIRED` carries base64 JSON. Parsing the raw header value as JSON throws,
+  and reading the `{}` body as the quote gets you nothing — which is how a price cap ends
+  up never firing while looking like it is on. Decode it, or let
+  [`RiparClient.quote()`](/reference/sdk#quote) do it.
+</Callout>
+
+Decoded, the challenge is an x402 v2 `accepts` list:
+
+```json
+{
+  "x402Version": 2,
+  "resource": { "url": "https://api.ripar.io/api/summarize" },
+  "accepts": [
     {
-      "id": "run_8c21",
-      "status": "completed",
-      "attempts": 2,
-      "cost": "0.02",
-      "startedAt": "2026-07-14T09:00:00Z",
-      "steps": [
-        { "name": "check", "status": "ok", "ms": 340 },
-        { "name": "top-up", "status": "ok", "ms": 2900, "txId": "7A2F…9C1B" }
-      ]
+      "scheme": "exact",
+      "network": "algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=",
+      "amount": "10000",
+      "asset": "10458941",
+      "payTo": "KBDRZK3BV2YFJJAVV3S5XQYDWU4RDDI6EDXXKMG3O4AEVPEDCETDKEISKQ",
+      "maxTimeoutSeconds": 300,
+      "extra": { "feePayer": "ZMFK2OI7ZBD2U27ISERZC4S6LKM6WMFJPZQ4MYNJDZ2VNBNMBA67RA22AA" }
     }
   ]
 }
 ```
 
-## Jobs
+`amount` is **base units of `asset`**, not USD: `10000` of a 6-decimal USDC is `$0.01`.
+Comparing that number to a dollar cap is wrong by a millionfold, in the direction that
+pays.
 
-<Endpoint method="POST" path="/v1/jobs" />
-<Endpoint method="GET" path="/v1/jobs/{id}/bids" />
-<Endpoint method="POST" path="/v1/jobs/{id}/accept" />
+Retry with the signed payment in `PAYMENT-SIGNATURE` (x402 v2; `X-PAYMENT` is the v1
+spelling and is still accepted). On success the settlement receipt comes back in
+`PAYMENT-RESPONSE`, also base64.
 
-## Receipts
+<Endpoint method="GET" path="/a2a" />
+<Endpoint method="POST" path="/a2a" />
 
-<Endpoint method="GET" path="/v1/receipts" />
+The A2A endpoint. `GET` returns a descriptor; `POST` speaks JSON-RPC 2.0 and supports one
+method, `message/send`.
 
-| Param | Type | Notes |
-| --- | --- | --- |
-| `since` | ISO date | Inclusive |
-| `until` | ISO date | Exclusive |
-| `endpoint` | string | Filter by name |
-| `format` | string | `json` (default) or `csv` |
+```bash
+curl -s -X POST https://api.ripar.io/a2a \
+  -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"message/send",
+       "params":{"message":{"role":"user","parts":[{"kind":"text","text":"…"}]}}}'
+```
 
-## Pagination
+An unpaid call is a JSON-RPC error carrying the same challenge:
 
-Cursor-based. Follow `nextCursor` until it is `null`. Offsets are not supported —
-they skip rows when new records land mid-scan.
+```json title="200 OK (JSON-RPC error)"
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "error": {
+    "code": -32002,
+    "message": "This skill is paid. Settle the attached x402 challenge and retry with a PAYMENT-SIGNATURE header.",
+    "data": {
+      "protocol": "x402",
+      "requirements": { "x402Version": 2, "accepts": [ … ] },
+      "retryWith": "PAYMENT-SIGNATURE",
+      "alsoAccepted": ["X-PAYMENT"],
+      "restEquivalent": "/api/summarize"
+    }
+  }
+}
+```
+
+Note the transport: the JSON-RPC envelope returns `200` and puts the failure in `error`.
+Branch on `error.code`, not on the HTTP status.
+
+## Authentication
+
+None. There is no API key to issue and no account to create — **payment is the
+authentication**, and it is per request. That is the whole point of
+[x402](/concepts/x402).
 
 ## Rate limits
 
-Management API: 600 requests per minute per token. Exceeding it returns `429` with
-`Retry-After`. Paid endpoint calls are not rate limited by Ripar — they are limited by
-what you are willing to pay. See [Limits & pricing](/limits).
+Nothing on `api.ripar.io` rate limits you beyond what you are willing to pay. An agent
+you run yourself can add its own limiter, keyed on the paying address:
+
+```ts
+await serve(agent, { rateLimit: { perMinute: 60, per: "payer" } });
+```
+
+It is in-process, so two replicas allow two windows. See [Limits &
+costs](/limits).

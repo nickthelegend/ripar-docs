@@ -1,41 +1,101 @@
 export const metadata = {
-  title: "Deploy an agent",
-  description: "Turn any HTTP handler into a priced, discoverable, autoscaled x402 endpoint.",
+  title: "Build an agent",
+  description: "Turn any HTTP handler into a priced x402 endpoint, and the three checks that run before payment.",
 };
 
-# Deploy an agent
+# Build an agent
 
 ## Define the endpoint
 
 An endpoint is a handler plus a price. Nothing else is required:
 
-```ts title="src/index.ts"
+```ts title="agent.ts"
 import { defineEndpoint } from "@ripar/sdk";
 
-export default defineEndpoint({
+export const summarize = defineEndpoint({
   name: "summarize",
-  price: "0.01",
+  description: "Returns a short summary of any text payload.",
+  price: "$0.01",
   timeout: 30_000,
   input: {
     type: "object",
     properties: { text: { type: "string", minLength: 1 } },
     required: ["text"],
+    additionalProperties: false,
   },
   // The handler takes one argument — log is a field on it, not a second param.
   async handler({ body, log }) {
-    log("summarizing", { chars: body.text.length });
-    return { summary: await summarize(body.text) };
+    const { text } = body as { text: string };
+    log("summarizing", { chars: text.length });
+    return { summary: await summarise(text) };
   },
 });
 ```
 
-The `input` schema is enforced before your handler runs — and published to the
-[Bazaar](/concepts/discovery) so callers can construct valid requests unaided.
+The `input` schema is enforced before your handler runs — and published in the
+[manifest](/concepts/discovery) so callers can construct valid requests unaided.
+
+## Bundle and serve
+
+```ts title="agent.ts"
+import { defineAgent, serve } from "@ripar/sdk";
+
+await serve(
+  defineAgent({
+    name: "Text Tools",
+    handle: "text-tools",
+    description: "Small, cheap text utilities priced per call.",
+    payTo: process.env.RIPAR_PAY_TO!,          // settlement lands here directly
+    network: (process.env.RIPAR_NETWORK as "mainnet" | "testnet") ?? "testnet",
+    endpoints: [summarize],
+  }),
+  { port: Number(process.env.PORT ?? 4021) }
+);
+```
+
+There is no payment code in that file, and that is the point. `serve()` puts x402 in
+front, so an unpaid request never reaches your handler — and the process holds no signing
+key at all.
+
+## Three things that happen before payment
+
+```ts
+await serve(agent, {
+  rateLimit:   { perMinute: 60, per: "payer" },   // 429 + Retry-After
+  idempotency: { windowMs: 10 * 60_000 },         // honour Idempotency-Key
+});
+```
+
+The order is `rate limit → idempotency → input validation → payment → handler`, and the
+position is the feature. **A request rejected by any of them has not been charged**,
+because the payment middleware was never reached.
+
+- **Input validation** — the body is checked against the same `input` schema the manifest
+  publishes, and a failure is a `400` naming the field, with the schema echoed back. A
+  request with no body *and* no payment is treated as a price probe and passes through,
+  because a caller needs the 402 in order to learn the schema in the first place.
+- **Rate limiting** — keyed on the Algorand address inside the payment header, so a caller
+  cannot get a fresh budget by changing IP. Off unless you pass `rateLimit`, in-process
+  (two replicas allow two windows), and in `per: "payer"` mode it does not limit unpaid
+  traffic at all. The header is **not** signature-checked before the limiter reads it, so
+  the payer identity is a claim rather than proof — see the known-gap note in the SDK's
+  `src/identity.ts`.
+- **Idempotency** — a caller who did not receive an answer retries with the same
+  `Idempotency-Key` and gets the stored response instead of paying again. Concurrent
+  retries get `409 idempotency_in_progress`; the same key with a different body gets
+  `409 idempotency_key_reuse`.
+
+<Callout type="warning" title="What idempotency does and does not guarantee">
+  Exactly: "a completed `2xx` is replayed, not re-run". Not: "a dropped connection can
+  never be charged twice". A request that settled and then lost its socket *before writing
+  a response* releases its claim, and the retry does reach the payment middleware and
+  settle again. The store is also in-process — two instances keep two stores.
+</Callout>
 
 ## Pricing models
 
-An endpoint charges per call or sells a window. There are two shapes, and
-`price` accepts either a fixed amount or a function:
+An endpoint charges per call or sells a window. `price` accepts either a fixed amount or a
+function:
 
 ```ts
 price: "$0.01"                                  // flat, per request
@@ -43,28 +103,35 @@ price: ({ body }) => …                          // you quote each request
 subscription: { price: "$5.00", period: "30d" } // one payment buys a window
 ```
 
-`price` and `subscription` are mutually exclusive — TypeScript rejects an
-endpoint that sets both, because the 402 can only quote one number.
+`price` and `subscription` are mutually exclusive — TypeScript rejects an endpoint that
+sets both, because the 402 can only quote one number.
 
 With a function, quote from anything on the request. It runs before the work:
 
 ```ts
-async price({ body }) {
-  // Charge in proportion to the work requested, with a floor.
-  return Math.max(0.005, body.text.length * 0.000002).toFixed(6);
-},
+defineEndpoint({
+  name: "complete",
+  price: ({ body }) => `$${(0.002 + 0.0004 * Math.ceil(body.maxTokens / 100)).toFixed(4)}`,
+  priceHint: "$0.0024–$0.0100 (by maxTokens)",   // what the manifest shows
+  handler,
+});
 ```
 
+It has to be cheap (every unpaid probe pays its cost) and deterministic for a given body
+(the caller quotes, signs, and sends again — a price that moved in between rejects a
+payment they built correctly). A price function cannot be serialised, so the manifest
+publishes your `priceHint`, or the literal string `"dynamic"` if you did not write one.
+
 <Callout type="warning" title="Dynamic prices are quoted, then honoured">
-  The amount your `price()` returns is what goes in the 402. You cannot charge more
-  than you quoted after the fact — if the work turns out larger, that is your loss, so
-  build the margin into the quote.
+  The amount your `price()` returns is what goes in the 402. You cannot charge more than
+  you quoted after the fact — if the work turns out larger, that is your loss, so build
+  the margin into the quote.
 </Callout>
 
 ## Subscriptions
 
-x402 settles one request at a time and nothing can pull from a caller's wallet
-later, so a subscription here is a single settlement that buys a window:
+x402 settles one request at a time and nothing can pull from a caller's wallet later, so a
+subscription here is a single settlement that buys a window:
 
 ```ts
 defineEndpoint({
@@ -74,61 +141,98 @@ defineEndpoint({
 })
 ```
 
-The first unpaid call gets a 402 quoting `$5.00`. Once it settles, the response
-carries `x-ripar-subscription: rsk_…`, and every call presenting that key runs
-free until it expires — the request never reaches the facilitator at all.
+The first unpaid call gets a 402 quoting `$5.00`. Once it settles, the response carries
+`x-ripar-subscription: rsk_…`, and every call presenting that key runs free until it
+expires — the request never reaches the facilitator at all.
 
 ```ts
-const sub = await client.subscribe("https://agent.example/api/feed")
-await client.call("https://agent.example/api/feed")  // free, until sub.expiresAt
+const sub = await client.subscribe("https://agent.example/feed")
+await client.call("https://agent.example/feed")  // free, until sub.expiresAt
 ```
 
-A key is scoped to the endpoint that sold it, so the cheapest window on your
-agent cannot open the dearest one. Nothing renews on its own: when the window
-closes the endpoint quotes again and the caller decides.
+A key is scoped to the endpoint that sold it, so the cheapest window on your agent cannot
+open the dearest one. Nothing renews on its own: when the window closes the endpoint
+quotes again and the caller decides.
 
 <Callout type="warning" title="The default store is per-process">
-  Keys live in memory unless you pass one. Behind two replicas, a key minted on A
-  is unknown to B and the caller is asked to pay twice. Pass a shared store —
+  Keys live in memory unless you pass one. Behind two replicas, a key minted on A is
+  unknown to B and the caller is asked to pay twice. Pass a shared store —
   `serve(agent, { subscriptions: { store } })` — for anything running more than one
   instance. The interface is `get`/`put`/`sweep`.
 </Callout>
 
+## Failure is how the caller keeps their money
+
+`@x402/express` buffers the response and only settles after the handler returns a success
+status. A `4xx` or `5xx` **cancels settlement**, so a failed call is never charged rather
+than charged and refunded.
+
+```ts
+async handler({ body }) {
+  const out = await work(body);
+  if (!out) throw new Error("upstream returned nothing");  // 500, nothing settles
+  return out;
+}
+```
+
+<Callout type="warning" title="Never dress a failure as a 200">
+  Catching a failure and returning `200` with an error object in the body settles the
+  payment. The caller has then paid for nothing and has no way to tell.
+</Callout>
+
+A handler that exceeds `timeout` (default 30s, max 300s) is abandoned with
+`handler_timeout` and a `504`, which likewise never settles.
+
 ## Secrets
 
-Never commit them. Set them per-environment:
+Ordinary environment variables — there is no Ripar-managed secret store, and no
+`ripar env` command. Set them however your platform sets environment variables, and keep
+`.env` out of git:
 
 ```bash
-ripar env set OPENAI_API_KEY sk-… --env production
-ripar env ls
+RIPAR_PAY_TO=YOUR_ALGORAND_ADDRESS
+RIPAR_NETWORK=testnet
+OPENAI_API_KEY=sk-…
 ```
 
-They are exposed to the handler as `process.env` and are not readable back through the
-API once set.
+Your handler reads them from `process.env` like any other Node process.
 
-## Deploy and roll back
+## Running it
+
+Locally:
 
 ```bash
-ripar deploy                      # to production
-ripar deploy --env staging        # to a preview environment
-ripar rollback --to dep_7f21c     # instant, previous build is kept warm
+ripar dev
 ```
 
-## Runtime behaviour
+In production, it is a plain Node server — `node dist/index.js`, or `node agent.ts` on
+Node 22.6+. There is no `ripar deploy`; see [Deploy anywhere](/guides/deploy-anywhere)
+for Railway, Render, Fly.io, Heroku and Docker.
 
-- **Autoscaling** — instances follow request volume; scale to zero when idle.
-- **Cold starts** — typically under 300ms for Node templates.
-- **Timeouts** — per endpoint, default 30s, maximum 300s. A timeout refunds the caller.
-- **Logs** — `ctx.log()` writes to the execution record for that request.
+## Operating routes
 
-```bash
-ripar logs summarize --follow
+Every agent mounts four unpaid routes alongside its endpoints:
+
+| Route | For |
+| --- | --- |
+| `GET /health` | Platform probes. A paid one would read a healthy agent as down. |
+| `GET /.well-known/ripar.json` | Discovery. It has to work before payment can. |
+| `GET /metrics` | Prometheus: requests by endpoint and status, in-flight, duration, settled. |
+| `GET /_ripar/runs` | The last calls: id, endpoint, status, ms, txId. No request bodies. |
+
+`/_ripar/runs` is a capped in-memory ring buffer (100 by default, `runsCapacity` to
+change it), so it is an operational view and not an accounting record.
+
+## Shutting down
+
+`serve()` installs `SIGTERM`/`SIGINT` handlers by default. On signal the agent answers
+`503 shutting_down` with `Retry-After` to *new* requests and drains the in-flight ones —
+a caller told to come back has lost nothing, where a dropped paid call has.
+
+```ts
+await serve(agent, {
+  shutdownTimeoutMs: 10_000,
+  handleSignals: false,           // when something else owns the lifecycle
+  onShutdown: ({ outcome, abandoned }) => log.info({ outcome, abandoned }),
+});
 ```
-
-## Custom domains
-
-```bash
-ripar domains add api.yourcompany.com --endpoint summarize
-```
-
-Your callers hit your domain; the payment handshake is unchanged.

@@ -1,6 +1,6 @@
 export const metadata = {
   title: "Your first payment",
-  description: "Be the caller: discover a paid endpoint, settle it in USDC, and read the receipt.",
+  description: "Be the caller: quote a live paid endpoint, settle it in USDC, and read the receipt.",
 };
 
 # Your first payment
@@ -8,44 +8,81 @@ export const metadata = {
 The [Quickstart](/quickstart) put you on the earning side. This page puts you on the
 paying side — which is what your agent will actually be doing most of the time.
 
+There is a live endpoint to practise against: `https://api.ripar.io/api/summarize`, on
+Algorand **TestNet**, at `$0.01` a call.
+
 ## Fund a wallet
 
-You need USDC on Algorand and a little ALGO for fees.
+You need TestNet USDC (asset `10458941`) and, depending on the facilitator, a little
+ALGO for fees. There is no `ripar wallet` command — use a wallet you already have (Pera,
+Defly, or `algosdk` in a script) and put its mnemonic in the environment:
 
 ```bash
-ripar wallet create          # or: ripar wallet import <mnemonic>
-ripar wallet show
+export RIPAR_MNEMONIC="your twenty five word mnemonic …"
 ```
 
 <Callout type="warning" title="Use a dedicated spending wallet">
-  Fund it with what you are willing to let an agent spend. Combine this with
-  [spend caps](/security#spend-caps) rather than pointing an autonomous process at
-  your main treasury.
+  Fund it with what you are willing to let an agent spend. Combine that with
+  [spend caps](/security#spend-caps) — and read where those are enforced — rather than
+  pointing an autonomous process at your main wallet.
 </Callout>
 
-## Discover something to call
+Confirm the facilitator agrees with you about the network before you spend anything:
 
 ```bash
-ripar search "wallet risk score"
+ripar doctor --network testnet --pay-to YOUR_ADDRESS
+```
+
+If `fees` reports *sponsored*, callers need USDC but no ALGO.
+
+## Find out what it costs
+
+Quoting is free and needs no wallet:
+
+```bash
+ripar manifest https://api.ripar.io
 ```
 
 ```ansi title="output"
-NAME                     PRICE        LATENCY   CALLS/24H
-wallet-risk/score        0.010 USDC   340ms     12,480
-chain-intel/addr-label   0.004 USDC   210ms      6,201
+Ripar Text Tools  @ripar-text-tools
+  A real, payable x402 endpoint on Algorand TestNet.
+
+  network   testnet
+  payTo     KBDRZK3BV2YFJJAVV3S5XQYDWU4RDDI6EDXXKMG3O4AEVPEDCETDKEISKQ
+  asset     USDC (10458941)
+
+  ENDPOINT           PRICE   DESCRIPTION
+  POST /summarize    $0.01   Summarise any text payload into whole sentences.
 ```
+
+```bash
+ripar quote https://api.ripar.io/api/summarize --body '{"text":"a long article…"}'
+```
+
+<Callout type="note" title="There is no search index to query">
+  Nothing here searched a directory — the manifest was read from a host you already knew.
+  Ripar has no search command and is not currently listed in any index. See
+  [Discovery](/concepts/discovery) for what does and does not exist today.
+</Callout>
 
 ## Pay for one call
 
 ```bash
-ripar call wallet-risk/score --data '{"address":"ADDR…K7QX"}'
+ripar call https://api.ripar.io/api/summarize \
+  --body '{"text":"a long article…"}' \
+  --max-price 0.02 \
+  --network testnet
 ```
 
 ```ansi title="output"
-→ 402  price 0.010 USDC
-→ paid 0.010 USDC  tx 4B81…2D0A  (2.9s)
-← 200  {"score":0.12,"band":"low"}
+{
+  "summary": "…"
+}
+settled · 4B81…2D0A
 ```
+
+The JSON body goes to stdout and the settlement line to stderr, so piping into `jq` still
+works.
 
 ## The same thing in code
 
@@ -53,38 +90,42 @@ ripar call wallet-risk/score --data '{"address":"ADDR…K7QX"}'
 import { RiparClient } from "@ripar/sdk";
 
 const ripar = new RiparClient({
-  mnemonic: process.env.RIPAR_WALLET_MNEMONIC,
-  maxPrice: "0.02", // refuse to pay more than this, whatever the quote says
+  mnemonic: process.env.RIPAR_MNEMONIC,
+  network: "testnet",
+  maxPrice: "0.02",  // refuse to pay more than this, whatever the quote says
+  maxPerDay: "1.00", // and stop entirely after this much in a rolling 24h
 });
 
 // The client performs the whole handshake: it sends the request, reads the 402,
-// signs a payment for the quoted amount, and retries — all inside one call.
-const res = await ripar.call("https://api.ripar.io/a/wallet-risk/score", {
-  address: "ADDR…K7QX",
+// checks the quote against the caps, signs a payment, and retries — in one call.
+const res = await ripar.call("https://api.ripar.io/api/summarize", {
+  text: "a long article…",
 });
 
-console.log(res.data);          // { score: 0.12, band: "low" }
+console.log(res.data);          // { summary: "…" }
 console.log(res.payment?.txId); // 4B81…2D0A
+console.log(ripar.remainingToday); // what is left under maxPerDay
 ```
 
 <Callout type="tip" title="Always set maxPrice">
-  `maxPrice` is the difference between an agent that buys a service and an agent that
-  drains a wallet because an endpoint quoted 40 USDC. The client reads the quote and
-  throws `price_above_max` before anything is signed — see the [SDK
-  reference](/reference/sdk#riparclient).
+  Without it, the wrapped fetch settles whatever it is quoted. With it, the client reads
+  the quote first and throws `price_above_max` before anything is signed — and if the
+  quote cannot be decoded at all it throws `unreadable_quote` rather than paying blind.
+  Both checks run in **your** process; nothing on the network enforces them for you.
 </Callout>
 
 ## Read the receipt
 
-Every paid call is recorded with the transaction that settled it:
+`res.payment` carries the settlement, decoded from the base64 `PAYMENT-RESPONSE` header:
 
-```bash
-ripar receipts --last 1
+```ts
+res.payment;
+// { txId: "4B81…2D0A", amount: "10000", usd: 0.01, asset: "10458941" }
 ```
 
-```ansi title="output"
-req_8f21c  wallet-risk/score  0.010 USDC  tx 4B81…2D0A  200  340ms
-```
+`amount` is base units of `asset`; `usd` is that converted, and is only present when the
+asset's decimals are known.
 
-Reconciling spend is a query, not an investigation — see [Payments &
-settlement](/concepts/payments).
+To reconcile spend across processes, read the chain rather than a local log — the [MCP
+server's](/reference/mcp) `ripar_settlements` lists real USDC transfers for an address
+from the Algorand indexer. See [Payments & settlement](/concepts/payments).

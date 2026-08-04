@@ -17,28 +17,46 @@ There are only two moves.
 
 ```http
 HTTP/1.1 402 Payment Required
-X-Payment-Required: {
-  "amount": "0.01",
-  "asset": "USDC",
-  "network": "algorand",
-  "payTo": "ADDR…K7QX",
-  "nonce": "9f2c…",
-  "expires": 1767225600
+PAYMENT-REQUIRED: eyJ4NDAyVmVyc2lvbiI6MiwiYWNjZXB0cyI6W3sic2NoZW1lIjoiZXhhY3Qi…
+
+{}
+```
+
+The header is base64 JSON, and the body is empty. Decoded:
+
+```json
+{
+  "x402Version": 2,
+  "resource": { "url": "https://api.ripar.io/api/summarize" },
+  "accepts": [
+    {
+      "scheme": "exact",
+      "network": "algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=",
+      "amount": "10000",
+      "asset": "10458941",
+      "payTo": "KBDRZK3B…KEISKQ",
+      "maxTimeoutSeconds": 300
+    }
+  ]
 }
 ```
+
+`amount` is base units of `asset` — `10000` of a 6-decimal USDC is `$0.01`.
 
 **2 · The client pays and retries.**
 
 ```http
-GET /a/summarize HTTP/1.1
-X-PAYMENT: <base64 signed payment payload>
+POST /api/summarize HTTP/1.1
+PAYMENT-SIGNATURE: <base64 signed payment payload>
 ```
 
-If the payment verifies, the server runs the work and returns `200` with proof:
+`PAYMENT-SIGNATURE` is the x402 v2 header name; `X-PAYMENT` is the v1 spelling and is
+still accepted. If the payment verifies, the server runs the work and returns `200` with
+the receipt, also base64:
 
 ```http
 HTTP/1.1 200 OK
-X-Payment-Response: {"txId":"7A2F…9C1B","settled":true}
+PAYMENT-RESPONSE: eyJ0eElkIjoiN0EyRuKApjlDMUIiLCJhbW91bnQiOiIxMDAwMCJ9
 ```
 
 ## Why this matters for agents
@@ -63,18 +81,25 @@ round trip.
 
 ## Roles in the flow
 
-- **Client** — the agent or program making the request. Signs payments, enforces
-  its own `maxPrice`.
+- **Client** — the agent or program making the request. Signs payments, and enforces its
+  own `maxPrice` — enforcement lives here and nowhere else. See
+  [Security](/security#spend-caps).
 - **Resource server** — your endpoint. Refuses unpaid calls, runs the work once paid.
-- **Facilitator** — verifies the payment is valid and settled before the handler runs.
-  Ripar uses [GoPlausible](https://goplausible.com) on Algorand.
-- **Bazaar** — the discovery layer where endpoints publish their price and schema. See
-  [Discovery & the Bazaar](/concepts/discovery).
+- **Facilitator** — verifies the payment and submits it. Ripar's default is
+  [GoPlausible](https://goplausible.com) on Algorand, which also sponsors the network fee,
+  so callers generally need USDC and no ALGO.
+- **Bazaar** — a public index of resources and their prices, served by the facilitator at
+  `/discovery/resources`. See [Discovery](/concepts/discovery) for what Ripar does and
+  does not publish to it.
 
 ## What Ripar adds on top
 
-x402 is a payment handshake and nothing more. It says nothing about where your code
-runs, what happens when a call fails halfway, how anyone finds you, or how work gets
-assigned. Ripar supplies those: the [runtime](/guides/deploy), the [execution
-guarantees](/guides/workflows), the [marketplace](/guides/marketplace) and the
-[Orchestrator](/guides/orchestrator).
+x402 is a payment handshake and nothing more. It says nothing about how you write the
+endpoint, how a caller bounds its spending, or how any of it is discovered. Ripar supplies
+a thin layer over those: [`defineEndpoint` and `serve()`](/guides/deploy) for the earning
+side, [`RiparClient`](/first-payment) for the paying side, a [manifest and agent
+card](/concepts/discovery) for discovery, an [MCP server](/reference/mcp) so an agent can
+use all of it, and an [on-chain registry](/guides/jobs) of identities, reputation and
+jobs.
+
+It does not add a runtime, a scheduler, or an escrow. Nothing here runs your code for you.

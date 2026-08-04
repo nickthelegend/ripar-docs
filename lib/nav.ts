@@ -8,7 +8,7 @@ export const NAV: DocGroup[] = [
     group: "Getting started",
     items: [
       { title: "Introduction", href: "/", desc: "What Ripar is and who it is for" },
-      { title: "Quickstart", href: "/quickstart", desc: "Ship a paid endpoint in five minutes" },
+      { title: "Quickstart", href: "/quickstart", desc: "Run a paid endpoint locally" },
       { title: "Your first payment", href: "/first-payment", desc: "Call a paid endpoint and settle it" },
     ],
   },
@@ -17,18 +17,16 @@ export const NAV: DocGroup[] = [
     items: [
       { title: "The x402 protocol", href: "/concepts/x402", desc: "HTTP 402, revived" },
       { title: "Payments & settlement", href: "/concepts/payments", desc: "USDC on Algorand, end to end" },
-      { title: "Discovery & the Bazaar", href: "/concepts/discovery", desc: "How agents find your endpoint" },
+      { title: "Discovery", href: "/concepts/discovery", desc: "Manifests, agent cards and the Bazaar" },
       { title: "Custody model", href: "/concepts/custody", desc: "Where the money actually sits" },
     ],
   },
   {
     group: "Guides",
     items: [
-      { title: "Deploy an agent", href: "/guides/deploy", desc: "From handler to priced endpoint" },
+      { title: "Build an agent", href: "/guides/deploy", desc: "From handler to priced endpoint" },
       { title: "Deploy anywhere", href: "/guides/deploy-anywhere", desc: "Railway, Render, Fly.io, Heroku, Docker" },
-      { title: "Build a workflow", href: "/guides/workflows", desc: "Triggers, conditions, retries" },
-      { title: "Sell on the marketplace", href: "/guides/marketplace", desc: "Publish, price, get paid" },
-      { title: "Orchestrator jobs", href: "/guides/orchestrator", desc: "Post work, take the best bid" },
+      { title: "Jobs & validation", href: "/guides/jobs", desc: "The on-chain job registry" },
     ],
   },
   {
@@ -36,17 +34,17 @@ export const NAV: DocGroup[] = [
     items: [
       // First in the group: it is the surface most people touch before any other.
       { title: "SDK", href: "/reference/sdk", desc: "defineEndpoint, defineAgent, serve, RiparClient" },
-      { title: "MCP server", href: "/reference/mcp", desc: "Tools exposed to agents" },
-      { title: "REST API", href: "/reference/api", desc: "Endpoints, params, responses" },
       { title: "CLI", href: "/reference/cli", desc: "Every command" },
+      { title: "MCP server", href: "/reference/mcp", desc: "Tools exposed to agents" },
+      { title: "Agent HTTP API", href: "/reference/api", desc: "What a running agent serves" },
       { title: "Errors", href: "/reference/errors", desc: "What went wrong and why" },
     ],
   },
   {
     group: "Operating",
     items: [
-      { title: "Security", href: "/security", desc: "Keys, escrow, spend caps" },
-      { title: "Limits & pricing", href: "/limits", desc: "Rate limits and what it costs" },
+      { title: "Security", href: "/security", desc: "Keys, spend caps, what is not covered" },
+      { title: "Limits & costs", href: "/limits", desc: "Real limits and what a call costs" },
     ],
   },
 ];

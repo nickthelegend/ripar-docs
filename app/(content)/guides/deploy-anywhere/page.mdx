@@ -6,10 +6,9 @@ export const metadata = {
 
 # Deploy anywhere
 
-`ripar deploy` puts your handler on Ripar-managed instances, and for most people that
-is the end of it. It is not the only option: an agent built with
-[`@ripar/sdk`](/reference/sdk) is an ordinary Node HTTP server, so it runs anywhere
-Node runs.
+There is no `ripar deploy` and no managed runtime — an agent built with
+[`@ripar/sdk`](/reference/sdk) is an ordinary Node HTTP server, and hosting it is your
+call. That is the whole story: it runs anywhere Node runs.
 
 Three properties are what make that true, and every platform below leans on them:
 
@@ -40,6 +39,13 @@ npm run build                 # tsc → dist/
 | `RIPAR_PAY_TO` | Yes | Your Algorand address. Paste it from the wallet; a retyped address that still checksums sends revenue elsewhere. |
 | `RIPAR_NETWORK` | No | `mainnet` (default) or `testnet`. Deploy to TestNet first. |
 | `PORT` | No | Set by the platform. Read, never written. |
+
+<Callout type="warning" title="@ripar/sdk is not on npm yet">
+  `npm ci` on a platform builder will fail to resolve it. Until 0.1.0 is published, vendor
+  the built SDK into your image or install it from git —
+  `npm i github:nickthelegend/ripar-sdk` — and check that your platform's build step can
+  reach GitHub.
+</Callout>
 
 ## Railway
 
@@ -208,27 +214,34 @@ curl -i -X POST https://your-host/summarize \
 
 ```http
 HTTP/1.1 402 Payment Required
-X-Payment-Required: {"amount":"$0.01","asset":"USDC","network":"algorand","payTo":"ADDR…K7QX"}
+PAYMENT-REQUIRED: eyJ4NDAyVmVyc2lvbiI6MiwiYWNjZXB0cyI6W3sic2NoZW1lIjoiZXhhY3Qi…
+
+{}
 ```
 
 A `200` here means the middleware is not in front of your route, and you are giving the
-work away.
+work away. The quote is base64 in the header and the body is `{}` — `ripar quote <url>`
+decodes it for you.
 
-## Listing a self-hosted endpoint
+## Being found once it is up
 
-Self-hosting does not take you out of discovery. What the Bazaar indexes is the
-manifest, not the platform underneath it — register your host's
-`/.well-known/ripar.json` and it is listed like any other endpoint.
+Self-hosting does not put you in an index, but neither does anything else right now —
+there is no automatic listing on any deployment path. What a caller can reach is your
+manifest, so the URL is the thing worth handing out:
 
-Ranking then reads the same signals as a managed endpoint: success rate, latency at p50
-and p95, price against comparable endpoints, and settled volume. The difference is that
-uptime is now yours to hold up, and a listing that times out ranks accordingly.
+```
+https://your-host/.well-known/ripar.json
+```
+
+The SDK's `registerWithBazaar()` is not currently wired to a live endpoint; see
+[Discovery](/concepts/discovery) for exactly what works today and what does not. Uptime
+is yours to hold up either way.
 
 <Cards>
   <Card title="SDK reference" href="/reference/sdk">
     Every option on defineEndpoint, defineAgent, serve and RiparClient.
   </Card>
-  <Card title="Limits & pricing" href="/limits">
+  <Card title="Limits & costs" href="/limits">
     Timeouts, body sizes and what a call actually costs.
   </Card>
 </Cards>

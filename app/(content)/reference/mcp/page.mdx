@@ -1,83 +1,185 @@
 export const metadata = {
   title: "MCP server",
-  description: "The tools Ripar exposes to agents over the Model Context Protocol.",
+  description: "The eight tools Ripar exposes to agents over the Model Context Protocol.",
 };
 
 # MCP server
 
-Connect an agent over MCP and it can discover, price, pay for and call anything on the
-network — without you writing an integration.
+`@ripar/skills` is an MCP server over the live Algorand registries, plus x402 quoting and
+calling. Six of its tools read the chain, one composes an unsigned transaction, and one
+forwards a payment header you supply.
+
+<Callout type="warning" title="This server holds no key and cannot spend">
+  There is no wallet in this process and no credential story at all — it reads what
+  anyone can read from public AlgoNode endpoints. It cannot create a payment. To complete
+  a paid call you sign the payment yourself and pass the header in.
+</Callout>
 
 ## Connect
+
+Not published to npm. Run it straight from the repository:
 
 ```json title="claude_desktop_config.json"
 {
   "mcpServers": {
     "ripar": {
       "command": "npx",
-      "args": ["-y", "@ripar/mcp"],
-      "env": { "RIPAR_TOKEN": "rpr_…", "RIPAR_MAX_SPEND_PER_DAY": "5.00" }
+      "args": ["-y", "github:nickthelegend/ripar-skills"],
+      "env": { "RIPAR_NETWORK": "testnet" }
     }
   }
 }
 ```
 
-<Callout type="warning" title="Set a daily cap at the connection">
-  `RIPAR_MAX_SPEND_PER_DAY` is enforced server-side. An agent cannot raise it, and a
-  loop that goes wrong hits the ceiling instead of the wallet.
-</Callout>
+Or from a local clone, which is faster after the first build:
+
+```bash
+git clone https://github.com/nickthelegend/ripar-skills && cd ripar-skills
+npm install && npm run build
+```
+
+```json
+{
+  "mcpServers": {
+    "ripar": {
+      "command": "node",
+      "args": ["/absolute/path/to/ripar-skills/dist/bin/mcp-stdio.js"],
+      "env": { "RIPAR_NETWORK": "testnet" }
+    }
+  }
+}
+```
+
+```bash
+# Claude Code
+claude mcp add ripar -- npx -y github:nickthelegend/ripar-skills
+```
+
+`RIPAR_NETWORK` is the only variable that matters, and `testnet` is the default —
+**TestNet is the only network the registries are deployed on today.** There is no token
+and no server-side spend cap to configure: see [Security](/security#spend-caps) for where
+budget enforcement actually lives.
+
+## The registries it reads
+
+| Registry | Algorand TestNet app | Holds |
+| --- | --- | --- |
+| Identity | `768547159` | Agent id → domain → controlling address |
+| Reputation | `768559198` | Payments credited, USDC volume, validator verdicts |
+| Validation | `768547172` | The job board and its verdicts |
 
 ## Tools
 
-### `ripar.search`
+### `ripar_search_agents`
 
-Find endpoints by capability.
-
-```json
-{ "q": "algo/usd price", "maxPrice": "0.005", "limit": 5 }
-```
-
-Returns name, price, p50 latency, success rate and input schema for each match.
-
-### `ripar.call`
-
-Call an endpoint, performing the full 402 handshake.
+List or search agents in the IdentityRegistry by domain substring, exact agent id, or
+Algorand address. Read-only.
 
 ```json
-{ "name": "algo-usd/spot", "input": {}, "maxPrice": "0.005" }
+{ "query": "ripar.io", "limit": 25, "withReputation": true }
 ```
 
-Returns the response body plus `payment.txId`. Refuses if the quote exceeds `maxPrice`.
+Returns live registry records and an `/.well-known/agent.json` URL for each. If the chain
+is unreachable it fails rather than guessing.
 
-### `ripar.deploy`
+### `ripar_get_agent`
 
-Publish a handler as a paid endpoint.
+One agent, by `agentId`, `domain` or `address`, optionally with its reputation score and
+its jobs. Read-only.
 
-### `ripar.workflow.create`
+Returns `found: false` with a reason when the registry has no such agent — the contract's
+"not found" value is a literal `0`, so an absent agent is a real answer, not an error.
 
-Create a workflow with a trigger and conditions.
+### `ripar_get_reputation`
+
+An agent's score from the ReputationRegistry: payments credited, total USDC volume, and
+validator verdicts. Read-only.
+
+<Callout type="warning" title="A score is a claim recorded on chain, not one proven by it">
+  Each credit is keyed to a payment transaction id and the contract refuses to count the
+  same id twice — but it does **not** verify that the id names a real transfer. Check it
+  against the indexer with `ripar_settlements` before trusting a number.
+</Callout>
+
+### `ripar_list_jobs`
+
+Jobs on the ValidationRegistry, newest first, filterable by `status`, `agentId` or
+`jobId`. Read-only. Each job commits to its spec by hash; the spec and result themselves
+stay offchain.
 
 ```json
-{ "trigger": "cron:5m", "condition": "health < 1.4", "action": "supply" }
+{ "status": "submitted", "limit": 25 }
 ```
 
-### `ripar.jobs.create` · `ripar.jobs.bid`
+Statuses are `open`, `assigned`, `submitted`, `validated`, `disputed`, `cancelled`.
 
-Post a job to the Orchestrator, or bid on one.
+### `ripar_settlements`
 
-### `ripar.receipts`
+Real USDC transfers for an agent from the Algorand indexer, each marked with whether the
+ReputationRegistry has already counted it. Read-only.
 
-Read back what has been spent and on what.
+Inbound payments marked `counted: false` are reputation the agent earned but was never
+credited for — a gap only visible because the transfer log and the registry are read
+together.
+
+### `ripar_quote_endpoint`
+
+Ask a paid endpoint what it charges, without paying. Makes the request, reads the 402
+challenge, and reports the cheapest acceptable payment: amount, asset, network, payee.
+Read-only.
+
+```json
+{ "url": "https://api.ripar.io/api/summarize", "method": "POST", "body": { "text": "…" } }
+```
+
+An endpoint that answers `200` is reported as free rather than as an error.
+
+### `ripar_call_endpoint`
+
+Call an endpoint and return its response. **Can spend money, but only with a payment
+header you supply.**
+
+```json
+{
+  "url": "https://api.ripar.io/api/summarize",
+  "method": "POST",
+  "body": { "text": "…" },
+  "paymentHeader": "<base64 signed payment>"
+}
+```
+
+Without `paymentHeader`, a 402 comes back as the challenge rather than a result. The
+header is forwarded untouched as `X-PAYMENT`.
+
+### `ripar_post_job`
+
+Compose a ValidationRegistry `post_job` call and return it **unsigned**, as base64
+msgpack, with a plain-language summary of what signing it would do. Nothing is submitted
+and no key is used.
+
+```json
+{
+  "sender": "KBDRZK3B…KEISKQ",
+  "specHash": "<hex of the 32-byte sha256 of the spec>",
+  "budgetMicro": 2500000,
+  "validatorAgentId": 0
+}
+```
+
+`budgetMicro` is USDC base units — `2500000` is $2.50. See [Jobs &
+validation](/guides/jobs) for what that number does and, importantly, does not do.
 
 ## A full exchange
 
 ```
-user  → Every 5 minutes, check my Folks Finance position and top up if
-        health drops below 1.4.
-agent → Creating workflow…
-tool  → ripar.workflow.create({ trigger: "cron:5m", condition: "health < 1.4",
-                                action: "supply" })
-tool  → 402 → paid 0.02 USDC → workflow wf_8c21 live
-agent → Done. It runs every 5 minutes and pays per execution. Each run lands
-        in the record.
+user  → Which registered Ripar agents have actually been paid?
+tool  → ripar_search_agents({ query: "", withReputation: true })
+tool  → 2 agents; agent 2 has a score box, agent 1 does not
+tool  → ripar_settlements({ agentId: 2 })
+tool  → 4 inbound USDC transfers, 3 counted, 1 counted:false
+agent → Agent 2 has been paid four times but only three of those were
+        credited to its on-chain score. Agent 1 has never been credited.
 ```
+
+Every number there came off the chain. Nothing in this server fabricates one — a failed
+read is an error, never a plausible-looking zero.

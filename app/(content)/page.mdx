@@ -1,70 +1,88 @@
 export const metadata = {
   title: "Introduction",
   description:
-    "Ripar is the execution and payment layer for autonomous agents on Algorand. Deploy an agent, run workflows, sell an endpoint, or hire an agent — every call settles in USDC over x402.",
+    "Ripar is an SDK, a CLI and an MCP server for paid agent endpoints on Algorand. Define a handler, set a price, and every call settles in USDC over x402.",
 };
 
 # Introduction
 
-Ripar is the **execution and payment layer for autonomous agents on Algorand**.
+Ripar makes an HTTP endpoint **payable per request in USDC on Algorand**, over
+[x402](/concepts/x402).
 
 An agent that can call an API is useful. An agent that can *pay for* an API without a
-human opening an account, entering a card and copying a key is something else — it can
-go find capability it does not have and buy it, mid-task, on its own. That is the gap
-Ripar fills.
+human opening an account, entering a card and copying a key is something else — it can go
+find capability it does not have and buy it, mid-task, on its own. That is the gap x402
+closes, and Ripar is the tooling around it.
+
+<Callout type="warning" title="What Ripar is">
+  Three things you run yourself: an **SDK**, the **`ripar` CLI** that ships inside it, and
+  an **MCP server** over the on-chain registries. There is no hosting platform, no
+  dashboard, no account, and no managed API — nothing here deploys or runs your code for
+  you. Both packages are pre-1.0 and neither is on npm yet; you install them from source.
+</Callout>
 
 <Callout type="note" title="New to any of this?">
-  If you have never seen HTTP 402 before, read [The x402 protocol](/concepts/x402)
-  first. It is short, and everything else here assumes it.
+  If you have never seen HTTP 402 before, read [The x402 protocol](/concepts/x402) first.
+  It is short, and everything else here assumes it.
 </Callout>
 
 ## What Ripar gives you
 
 <Cards>
-  <Card title="One-click agent deploy" href="/guides/deploy">
-    Push a handler, get a public HTTPS endpoint, an Algorand address and x402
-    middleware. Priced per request, live in a minute.
+  <Card title="A paid endpoint, in one file" href="/guides/deploy">
+    A handler and a price. `serve()` puts x402 in front, so an unpaid request never
+    reaches your code — and the process holds no key.
   </Card>
-  <Card title="Workflow execution" href="/guides/workflows">
-    Chain agents, tools and onchain actions with triggers and conditions. Retries,
-    backoff and idempotency are handled for you.
+  <Card title="A client that pays" href="/first-payment">
+    `RiparClient` does the whole handshake: quote, check it against your caps, sign,
+    retry. Price discovery is free and needs no wallet.
   </Card>
-  <Card title="Marketplace" href="/guides/marketplace">
-    Publish an endpoint and earn on every call. Discovery happens through the x402
-    Bazaar — no signup, no sales call.
+  <Card title="Run it anywhere" href="/guides/deploy-anywhere">
+    An agent is an ordinary Node HTTP server. Railway, Render, Fly.io, Heroku, Docker,
+    or your own box.
   </Card>
-  <Card title="The Orchestrator" href="/guides/orchestrator">
-    Post a job with a budget. Competing agents bid, and escrow releases only against a
-    verified result.
+  <Card title="An MCP server over the chain" href="/reference/mcp">
+    Eight tools that read the live Algorand identity, reputation and job registries — and
+    compose transactions without ever holding a key.
   </Card>
 </Cards>
 
 ## The shape of a paid call
 
-Every interaction on Ripar is the same four-step handshake. A caller asks, gets told the
-price, pays, and gets the work:
+Every interaction is the same handshake. A caller asks, gets told the price, pays, and
+gets the work:
 
 ```http
-GET /agents/summarize HTTP/1.1
+POST /api/summarize HTTP/1.1
 Host: api.ripar.io
+content-type: application/json
 
 HTTP/1.1 402 Payment Required
-X-Payment-Required: {"amount":"0.01","asset":"USDC","network":"algorand","payTo":"RIPAR…K7QX"}
+PAYMENT-REQUIRED: <base64 JSON: accepts[].amount, asset, network, payTo>
+
+{}
 ```
 
-The client attaches a payment and retries:
+The client decodes the challenge, signs a USDC transfer for exactly that amount, and
+retries:
 
 ```http
-GET /agents/summarize HTTP/1.1
+POST /api/summarize HTTP/1.1
 Host: api.ripar.io
-X-PAYMENT: <signed payment payload>
+PAYMENT-SIGNATURE: <base64 signed payment payload>
 
 HTTP/1.1 200 OK
-X-Payment-Response: {"txId":"7A2F…","settled":true}
+PAYMENT-RESPONSE: <base64 JSON: txId, payer, amount, asset>
 ```
 
-No API key was issued. No account was created. No invoice will be sent. The caller and
-the endpoint had never met.
+No API key was issued. No account was created. No invoice will be sent. The caller and the
+endpoint had never met.
+
+<Callout type="note" title="The quote is a header, and it is base64">
+  Not a JSON body. `JSON.parse` on the raw header value throws, and the `402`'s body is
+  usually `{}` — code that reads the body as the quote sees nothing, which is how a price
+  cap ends up never firing while looking like it is on.
+</Callout>
 
 ## Why Algorand
 
@@ -79,13 +97,17 @@ costs three cents and takes a minute to confirm.
 | Forks | None — finality is instant | A settled call is settled; no reorg risk |
 | USDC | Native ASA | No bridge, no wrapped-asset risk |
 
+The default facilitator sponsors the network fee, so callers generally need USDC and no
+ALGO at all. `ripar doctor` tells you whether that is true for the facilitator you are
+pointed at.
+
 ## Where to go next
 
 <Cards>
   <Card title="Quickstart" href="/quickstart">
-    Ship your first paid endpoint in about five minutes.
+    Run a paid endpoint locally and prove the gate works.
   </Card>
   <Card title="Your first payment" href="/first-payment">
-    Be the caller instead: pay for an endpoint and read the receipt.
+    Be the caller: quote a live endpoint, settle it, read the receipt.
   </Card>
 </Cards>

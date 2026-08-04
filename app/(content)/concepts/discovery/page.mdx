@@ -1,75 +1,120 @@
 export const metadata = {
-  title: "Discovery & the Bazaar",
-  description: "How an agent finds an endpoint it has never heard of, reads its schema, and calls it.",
+  title: "Discovery",
+  description: "How an agent finds an endpoint it has never heard of, reads its schema, and calls it — and what is not built yet.",
 };
 
-# Discovery & the Bazaar
+# Discovery
 
-A paid endpoint nobody can find earns nothing. The **x402 Bazaar** is the discovery
-layer: a public index of endpoints, their prices and their input schemas.
+A paid endpoint nobody can find earns nothing. There are three discovery surfaces here,
+and they are at very different stages of completion. It is worth being blunt about which
+is which.
 
-## What gets published
+| Surface | Status |
+| --- | --- |
+| The agent's own manifest | Works. Served by every agent, free. |
+| The A2A agent card | Works. Served alongside the manifest. |
+| The on-chain IdentityRegistry | Works, on Algorand TestNet. Read it over [MCP](/reference/mcp). |
+| Listing in the x402 Bazaar | **Not wired up.** See below. |
 
-When you deploy, Ripar registers a record like this:
+## The manifest
+
+Every agent built with `serve()` publishes one at `/.well-known/ripar.json`, unpaid:
 
 ```json
 {
-  "name": "wallet-risk/score",
-  "endpoint": "https://api.ripar.io/a/wallet-risk-score",
-  "price": { "amount": "0.010", "asset": "USDC", "network": "algorand" },
-  "input": {
-    "type": "object",
-    "properties": { "address": { "type": "string" } },
-    "required": ["address"]
-  },
-  "tags": ["algorand", "risk", "wallet"]
+  "name": "Ripar Text Tools",
+  "handle": "ripar-text-tools",
+  "network": "testnet",
+  "payTo": "KBDRZK3BV2YFJJAVV3S5XQYDWU4RDDI6EDXXKMG3O4AEVPEDCETDKEISKQ",
+  "endpoints": [
+    {
+      "name": "summarize",
+      "url": "https://api.ripar.io/api/summarize",
+      "method": "POST",
+      "price": "$0.01",
+      "input": {
+        "type": "object",
+        "properties": { "text": { "type": "string", "minLength": 1 } },
+        "required": ["text"]
+      }
+    }
+  ],
+  "x402": { "facilitator": "…", "network": "algorand:…", "asset": { "id": 10458941 } }
 }
 ```
 
 The schema is the important part. It is what lets a caller that has never seen your
-service construct a valid request without reading documentation.
-
-## Finding things
+service construct a valid request without reading documentation — and it is the same
+schema the server enforces before payment, so a request built from it cannot be rejected
+for shape.
 
 ```bash
-ripar search "price feed" --max-price 0.005
+ripar manifest https://api.ripar.io
 ```
 
-Or from an agent over MCP, which is the more common case:
+<Callout type="note" title="Why the manifest is free">
+  A caller that has never met you reads it to learn what exists, what it costs and what
+  shape the input takes. Charging for that would mean paying to find out whether
+  something is worth paying for.
+</Callout>
 
+## The agent card
+
+The same agent, described for agent-to-agent discovery, at
+`/.well-known/agent.json`. Its extensions carry the x402 prices, the on-chain `agentId`,
+and the MCP server a peer should connect to — so one fetch tells another agent how to pay
+you *and* which tools it will find. See the [Agent HTTP API](/reference/api).
+
+## The on-chain registry
+
+The IdentityRegistry (Algorand TestNet app `768547159`) binds an agent id to a domain and
+a controlling address. That binding is the only authenticated one in the system:
+everything else — a manifest, a card — is a claim served by a host.
+
+```json title="ripar_search_agents"
+{ "query": "ripar.io", "withReputation": true }
 ```
-agent → ripar.search({ q: "algo/usd price", maxPrice: "0.005" })
-tool  → [{ name: "algo-usd/spot", price: "0.001", latencyP50: 180 }, …]
-agent → ripar.call({ name: "algo-usd/spot" })
-tool  → 402 → paid 0.001 USDC → { "price": 0.1842, "ts": 1767225600 }
-```
 
-The agent discovered a service, evaluated its price against a budget, paid it and used
-the result — with no human in the loop at any step.
+Each result carries a `cardUrl` of `https://<domain>/.well-known/agent.json`, so resolving
+an id gets you to a live card. Reading the registry costs nothing and needs no key.
 
-## Ranking
+<Callout type="warning" title="Registration is a claim, not proof of a domain">
+  The registry records that an address said it controls a domain. Nothing verifies that
+  the domain agrees. Fetch the card and check that its `agentId` points back before you
+  treat the two as the same party.
+</Callout>
 
-Search results are ordered on observable behaviour, not on who paid for placement:
+## The Bazaar
 
-- **Success rate** over the trailing window
-- **Latency** at p50 and p95
-- **Price** relative to comparable endpoints
-- **Volume** of settled calls
+The x402 Bazaar is a real, live index — the GoPlausible facilitator serves it at
+`GET https://facilitator.goplausible.xyz/discovery/resources`, listing resources with
+their `accepts` blocks across Algorand, Base and Solana.
 
-<Callout type="warning" title="Listing is not endorsement">
-  Anything can list itself. Discovery tells you an endpoint exists and how it has
-  behaved — it is not a guarantee of correctness. Set a `maxPrice`, validate responses,
-  and prefer endpoints with real settled volume.
+<Callout type="warning" title="Ripar does not publish to it yet">
+  The SDK exports `registerWithBazaar()`, but its default target
+  (`/bazaar/register` on the facilitator) currently returns `404`, so calling it does not
+  list you anywhere. It never throws — a discovery failure is returned as a value, so an
+  index being down cannot take a working paid endpoint offline — which also means a
+  failed registration is easy to miss:
+
+  ```ts
+  const result = await registerWithBazaar("https://your-host/.well-known/ripar.json");
+  if (!result.ok) console.warn("not listed:", result.error);
+  ```
+
+  No Ripar endpoint currently appears in the index. Until this is wired up, discovery
+  means handing out your manifest URL or registering on chain.
 </Callout>
 
 ## Staying unlisted
 
-Not everything should be public. Private endpoints still take x402 payments but never
-enter the index:
+Not everything should be advertised. An endpoint marked `listed: false` still takes x402
+payments but is left out of the manifest:
 
-```bash
-ripar deploy --private
+```ts
+defineEndpoint({ name: "internal/reindex", price: "$0.05", listed: false, handler });
 ```
 
 Useful for paid internal services where you want metered billing between teams without
-advertising the capability.
+publishing the capability. It is omission, not access control — the URL is still callable
+by anyone who can pay and knows it exists.
