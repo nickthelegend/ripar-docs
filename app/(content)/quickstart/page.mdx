@@ -99,10 +99,13 @@ cp .env.example .env
 # RIPAR_NETWORK=testnet
 ```
 
-<Callout type="warning" title="Ripar never holds your balance">
-  Payments settle directly from the caller to the address in `RIPAR_PAY_TO`. Nothing in
-  this stack takes custody, and the server process holds no key at all. See [Custody
-  model](/concepts/custody).
+<Callout type="warning" title="Nothing here holds your balance">
+  Payments settle directly from the caller to the address in `RIPAR_PAY_TO`. The server
+  process holds no key at all — it never signs anything, which is why a compromised agent
+  cannot move money.
+
+  Job escrow is the one place a contract does take custody, it is opt-in per job, and it
+  is not this stack. See [Custody model](/concepts/custody).
 </Callout>
 
 Check the environment before you advertise a URL:
