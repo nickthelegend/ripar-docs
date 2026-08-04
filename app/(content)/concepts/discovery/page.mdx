@@ -90,20 +90,49 @@ The x402 Bazaar is a real, live index — the GoPlausible facilitator serves it 
 `GET https://facilitator.goplausible.xyz/discovery/resources`, listing resources with
 their `accepts` blocks across Algorand, Base and Solana.
 
-<Callout type="warning" title="Ripar does not publish to it yet">
-  The SDK exports `registerWithBazaar()`, but its default target
-  (`/bazaar/register` on the facilitator) currently returns `404`, so calling it does not
-  list you anywhere. It never throws — a discovery failure is returned as a value, so an
-  index being down cannot take a working paid endpoint offline — which also means a
-  failed registration is easy to miss:
+Getting listed is not a call you make. There is no registration endpoint — an earlier
+version of this SDK exported `registerWithBazaar()`, which POSTed a manifest to
+`/bazaar/register` on the facilitator, and that path returns `404`. Because the helper
+swallowed every failure by design, an agent that called it received a plausible
+`{ ok: false }` and believed itself listed forever.
 
-  ```ts
-  const result = await registerWithBazaar("https://your-host/.well-known/ripar.json");
-  if (!result.ok) console.warn("not listed:", result.error);
-  ```
+The real mechanism is a **route extension**. `serve()` attaches a Bazaar discovery
+extension to every endpoint with `listed: true`, deriving the example request body from
+that endpoint's own `input` schema, so the catalogue entry cannot drift from what
+validation will accept. The facilitator then catalogues the resource while verifying a
+payment for it.
 
-  No Ripar endpoint currently appears in the index. Until this is wired up, discovery
-  means handing out your manifest URL or registering on chain.
+The consequence is worth stating plainly: **an endpoint becomes discoverable by being
+paid for, not by announcing itself.** That is the same rule the Reputation Registry
+enforces, and it is why the index is worth reading — everything in it has taken real
+money.
+
+```ts
+// Nothing to call. This endpoint is listed by default, so serve() declares it.
+defineEndpoint({ name: "summarize", price: "$0.01", input: schema, handler })
+
+// listed: false keeps an endpoint payable but out of both the manifest and the index.
+defineEndpoint({ name: "internal", price: "$0.05", listed: false, handler })
+```
+
+### Reading the index
+
+```ts
+import { listBazaar, findInBazaar } from "@ripar/sdk";
+
+const all = await listBazaar({ limit: 50 });
+if (all.ok) for (const r of all.resources) console.log(r.resourceUrl, r.accepts);
+
+const oracles = await findInBazaar("oracle");
+```
+
+Neither throws — an index being down cannot take a working paid endpoint offline. A
+failure comes back as `{ ok: false, error }` so you can log it and carry on.
+
+<Callout type="warning" title="Search is local, not server-side">
+  The index has no search route (`/discovery/search` is a `404`), so `findInBazaar` reads
+  a page and filters it in your process. It only sees what `limit` fetched — an empty
+  result means "not in the page I read", not "does not exist".
 </Callout>
 
 ## Staying unlisted

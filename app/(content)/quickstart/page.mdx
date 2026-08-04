@@ -215,7 +215,8 @@ on Ripar waiting for a payout run.
 
 <Callout type="note" title="Nothing listed you anywhere">
   Running an agent does not publish it. Discovery is a separate, manual step — and the
-  SDK's `registerWithBazaar` helper currently posts to an endpoint that returns 404. See
+  SDK declares Bazaar discovery on each listed route, and the facilitator catalogues it
+  when a payment is verified — so an endpoint is listed by being paid for. See
   [Discovery](/concepts/discovery) for what actually works today.
 </Callout>
 
