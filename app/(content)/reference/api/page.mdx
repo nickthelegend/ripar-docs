@@ -147,14 +147,15 @@ curl -s -X POST https://api.ripar.io/a2a \
        "params":{"message":{"role":"user","parts":[{"kind":"text","text":"…"}]}}}'
 ```
 
-An unpaid call is a JSON-RPC error carrying the same challenge:
+An unpaid call is a JSON-RPC error carrying the same challenge. The status is `402` and
+the code is `-32010` — **not** `-32002`, which A2A reserves for `TaskNotCancelable`:
 
-```json title="200 OK (JSON-RPC error)"
+```json title="402 (JSON-RPC error)"
 {
   "jsonrpc": "2.0",
   "id": 1,
   "error": {
-    "code": -32002,
+    "code": -32010,
     "message": "This skill is paid. Settle the attached x402 challenge and retry with a PAYMENT-SIGNATURE header.",
     "data": {
       "protocol": "x402",

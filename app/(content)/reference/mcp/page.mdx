@@ -1,6 +1,6 @@
 export const metadata = {
   title: "MCP server",
-  description: "The eight tools Ripar exposes to agents over the Model Context Protocol.",
+  description: "The ten tools, seven resources and three prompts Ripar exposes over the Model Context Protocol.",
 };
 
 # MCP server
@@ -168,6 +168,51 @@ and no key is used.
 
 `budgetMicro` is USDC base units — `2500000` is $2.50. See [Jobs &
 validation](/guides/jobs) for what that number does and, importantly, does not do.
+
+### `ripar_fund_job`
+
+Composes the two-transaction group that moves a budget into escrow: the asset transfer to
+the ValidationRegistry's own account, then the `fund_job` call that reads the amount off
+it. Grouped in that order, returned **unsigned** — the server holds no key.
+
+Refuses before a fee is spent when the sender is not the client, the job is past funding,
+or the amount is zero.
+
+### `ripar_settle_escrow`
+
+Composes `release_escrow` or `refund_escrow`, chosen with `action`.
+
+Release needs a passing verdict, and may be called by the client — or by **anyone** once
+the dispute window has passed, because a validator who never returns would otherwise
+freeze the worker's money. Refund needs a failed verdict or a cancelled job, and pays the
+client whoever triggers it: the destination is read off the job, so calling it cannot
+redirect it.
+
+## Resources
+
+Registry state, readable without calling a tool:
+
+| URI | What |
+| --- | --- |
+| `ripar://registries` | The three app ids and the escrow terms, read from global state |
+| `ripar://agents` | Every registered agent |
+| `ripar://agent/{id}` | One agent, with its score and jobs |
+| `ripar://jobs` | Every job, with budget and escrow |
+| `ripar://job/{id}` | One job |
+
+Both templates ship `list` callbacks that read the chain, so `resources/list` returns the
+real roster rather than URI patterns.
+
+## Prompts
+
+| Name | For |
+| --- | --- |
+| `vet_agent` | Check an agent's identity and score before paying it |
+| `post_and_fund_job` | Post work and move the budget into escrow |
+| `settle_job_escrow` | Release or refund once it has been judged |
+
+Each references only tools that exist — asserted in the test suite, because a prompt
+naming a missing tool fails at the point somebody trusts it.
 
 ## A full exchange
 
