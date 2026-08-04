@@ -129,10 +129,12 @@ Being honest about the boundary:
 
 - **Endpoint quality.** Anyone can serve an x402 endpoint. Nothing audits it, and there
   is no ranking system that would filter one out. Validate what you get back.
-- **On-chain reputation.** A score in the ReputationRegistry is keyed to a payment
-  transaction id and cannot be double-counted, but the contract does not verify that the
-  id names a real transfer. Treat a score as a claim recorded on chain, not one proven by
-  it — cross-check with `ripar_settlements`.
+- **On-chain reputation.** A credit requires the settling USDC transfer to be a
+  transaction in the same atomic group, sent **from** the client's registered address
+  **to** the server's — both resolved through the IdentityRegistry. So the amount is read
+  off a transfer the AVM has already validated and cannot be fabricated. What a score
+  still does *not* tell you is whether the work was any good: it counts money that moved,
+  not results anyone judged. A validator verdict is a separate field.
 - **Prompt injection.** If your agent feeds untrusted text to an LLM that can call paid
   endpoints, `maxPrice` bounds the damage per call — it does not prevent the call.
 - **Your own handler.** Code you run holds the secrets you give it.

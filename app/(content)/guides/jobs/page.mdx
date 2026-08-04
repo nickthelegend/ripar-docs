@@ -6,7 +6,7 @@ export const metadata = {
 # Jobs & validation
 
 The ValidationRegistry is ERC-8004's third registry with a job lifecycle built around it,
-deployed on Algorand TestNet as app **`768547172`**. It is a *record* of who was asked to
+deployed on Algorand TestNet as app **`768570174`**. It is a *record* of who was asked to
 do what and how it was judged — not a payment rail.
 
 <Callout type="warning" title="There is no escrow and there is no bidding">
@@ -125,15 +125,20 @@ or by a single `jobId`. Statuses are `open`, `assigned`, `submitted`, `validated
 
 ## Reputation, and its gap
 
-Jobs are separate from the ReputationRegistry (app `768559198`), which counts *payments*
+Jobs are separate from the ReputationRegistry (app `768570171`), which counts *payments*
 rather than verdicts. Two things are worth knowing before you rank an agent on it:
 
-- A credit is keyed to a payment transaction id and cannot be counted twice, but the
-  contract does not verify that the id names a real transfer.
-- Real transfers frequently exist that were never credited at all.
+- A credit requires the settling transfer to be in the same atomic group, going from the
+  client's registered address to the server's. It cannot be minted from an id and an
+  amount a caller supplies. Replay is impossible for the same reason: the payment is
+  being submitted right now, and consensus rejects a duplicate transaction id.
+- Real transfers frequently exist that were never credited at all — crediting is a
+  separate call somebody has to make.
 
-`ripar_settlements` reads the indexer and the registry together and marks each transfer
-`counted: true` or `false`, which is the only way to see the difference.
+`ripar_settlements` lists the transfers alongside the agent's score. It does **not** mark
+individual transfers as counted or uncounted: the registry keeps no per-payment ledger,
+so that is not a question the chain can answer. What it can tell you is which transfers
+are *creditable* — above zero, and not self-sent.
 
 <Cards>
   <Card title="MCP server" href="/reference/mcp">
