@@ -9,12 +9,14 @@ The ValidationRegistry is ERC-8004's third registry with a job lifecycle built a
 deployed on Algorand TestNet as app **`768572979`**. It is a *record* of who was asked to
 do what and how it was judged — not a payment rail.
 
-<Callout type="warning" title="There is no escrow and there is no bidding">
-  A job's budget is a number written into a box. The contract never receives, holds or
-  transfers USDC, and has **no release path** — nothing pays out when a result verifies.
-  There is also no bid: the client names the agent directly with `assign_job`. Any money
-  that changes hands does so as an ordinary transfer, on terms the two parties settle
-  off-chain. See [Custody model](/concepts/custody).
+<Callout type="warning" title="Escrow is optional, and there is no bidding">
+  A budget and an escrow are different facts. The **budget** is a number in a box — what
+  the client says the work is worth. **Escrow** is what they actually handed over, and it
+  only exists if they called `fund_job`. A job showing a budget and no escrow is unfunded,
+  which is the single most useful thing to know before taking it on.
+
+  There is no bid: the client names the agent directly with `assign_job`.
+  See [Custody model](/concepts/custody).
 </Callout>
 
 ## The lifecycle
@@ -145,6 +147,6 @@ are *creditable* — above zero, and not self-sent.
     The tools that read all three registries, and the one that composes a job.
   </Card>
   <Card title="Custody model" href="/concepts/custody">
-    Why the budget number is not an escrow.
+    When the contract holds an asset, and when it only records a number.
   </Card>
 </Cards>

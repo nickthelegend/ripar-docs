@@ -33,13 +33,22 @@ settlement**. So a failed call is not refunded, it is never charged in the first
 - **The facilitator.** It verifies and submits the transfer the caller signed. It is not a
   destination.
 
-<Callout type="warning" title="There is no escrow">
-  A job's budget is a **recorded number, not locked funds.** The ValidationRegistry has
-  no method that takes custody of an asset and no release path — nothing "unlocks" when a
-  result verifies, and nothing "returns" when a job is cancelled. A validator's verdict
-  changes a status byte on chain and nothing else. Payment for a job is an ordinary
-  transfer the client makes, on whatever terms the two parties agreed off-chain. See
-  [Jobs & validation](/guides/jobs).
+<Callout type="warning" title="Escrow is the one exception, and it is opt-in">
+  Everywhere else in Ripar, settlement is direct and nothing takes custody. Job escrow is
+  the exception, and it only happens if the client calls `fund_job`.
+
+  When they do, the ValidationRegistry's own account holds the asset until
+  `release_escrow` pays the assignee on a passing verdict, or `refund_escrow` returns it
+  on a failed or cancelled one. The amount is read off a transfer in the same atomic
+  group rather than trusted from an argument, and the escrow box is cleared **before** the
+  transfer is submitted, so the same escrow cannot be paid twice.
+
+  **After the dispute window, anyone may release.** That path is the point: a validator
+  who never returns would otherwise freeze the worker's money for good, and a lock with
+  no key is not escrow, it is confiscation.
+
+  A job with no `fund_job` behind it holds nothing, and its budget stays what it always
+  was — a stated intention. See [Jobs & validation](/guides/jobs).
 </Callout>
 
 ## What Ripar does hold
