@@ -52,23 +52,26 @@ ripar call wallet-risk/score --data '{"address":"ADDR…K7QX"}'
 ```ts title="pay.ts"
 import { RiparClient } from "@ripar/sdk";
 
-const ripar = new RiparClient({ wallet: process.env.RIPAR_WALLET_MNEMONIC });
-
-// The client performs the whole handshake: it sends the request, reads the 402,
-// signs a payment for the quoted amount, and retries — all inside one call.
-const res = await ripar.call("wallet-risk/score", {
-  address: "ADDR…K7QX",
+const ripar = new RiparClient({
+  mnemonic: process.env.RIPAR_WALLET_MNEMONIC,
   maxPrice: "0.02", // refuse to pay more than this, whatever the quote says
 });
 
-console.log(res.data);        // { score: 0.12, band: "low" }
-console.log(res.payment.txId); // 4B81…2D0A
+// The client performs the whole handshake: it sends the request, reads the 402,
+// signs a payment for the quoted amount, and retries — all inside one call.
+const res = await ripar.call("https://api.ripar.io/a/wallet-risk/score", {
+  address: "ADDR…K7QX",
+});
+
+console.log(res.data);          // { score: 0.12, band: "low" }
+console.log(res.payment?.txId); // 4B81…2D0A
 ```
 
 <Callout type="tip" title="Always set maxPrice">
   `maxPrice` is the difference between an agent that buys a service and an agent that
-  drains a wallet because an endpoint quoted 40 USDC. The client refuses anything above
-  it without asking.
+  drains a wallet because an endpoint quoted 40 USDC. The client reads the quote and
+  throws `price_above_max` before anything is signed — see the [SDK
+  reference](/reference/sdk#riparclient).
 </Callout>
 
 ## Read the receipt

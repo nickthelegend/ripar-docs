@@ -1,0 +1,234 @@
+export const metadata = {
+  title: "Deploy anywhere",
+  description:
+    "Run a Ripar agent on Railway, Render, Fly.io, Heroku or Docker — configuration, health checks and the two checks that prove it works.",
+};
+
+# Deploy anywhere
+
+`ripar deploy` puts your handler on Ripar-managed instances, and for most people that
+is the end of it. It is not the only option: an agent built with
+[`@ripar/sdk`](/reference/sdk) is an ordinary Node HTTP server, so it runs anywhere
+Node runs.
+
+Three properties are what make that true, and every platform below leans on them:
+
+- **It reads `PORT`.** `serve()` listens on `process.env.PORT`, falling back to `4021`.
+  Never hardcode a port — platforms assign one.
+- **It answers `/health` without payment.** So does `/.well-known/ripar.json`. A health
+  check does not need a wallet.
+- **It honours `x-forwarded-proto` and `x-forwarded-host`.** Behind a platform's TLS
+  terminator, the socket address is not the URL callers reach — the manifest advertises
+  the forwarded one instead.
+
+<Callout type="note" title="Nothing here holds a key">
+  Settlement goes from the caller straight to the address in `payTo`. The process needs
+  no wallet and no signing key, so a compromised container cannot move your money. The
+  only secret worth protecting is whatever your own handler uses.
+</Callout>
+
+## Before any of them
+
+Build to plain JavaScript and set two variables:
+
+```bash
+npm run build                 # tsc → dist/
+```
+
+| Variable | Required | Notes |
+| --- | --- | --- |
+| `RIPAR_PAY_TO` | Yes | Your Algorand address. Paste it from the wallet; a retyped address that still checksums sends revenue elsewhere. |
+| `RIPAR_NETWORK` | No | `mainnet` (default) or `testnet`. Deploy to TestNet first. |
+| `PORT` | No | Set by the platform. Read, never written. |
+
+## Railway
+
+Nixpacks reads `package.json`, builds it and injects `PORT`. There is no config file.
+
+```bash
+railway init
+railway variables set RIPAR_PAY_TO=ADDR…K7QX RIPAR_NETWORK=mainnet
+railway up
+```
+
+Set the health check path to `/health` in **Settings → Deploy**. Railway terminates TLS
+and forwards `x-forwarded-proto`, so the manifest advertises the `https://` URL your
+callers actually reach.
+
+## Render
+
+Commit a blueprint and every push redeploys the agent from the same file:
+
+```yaml title="render.yaml"
+services:
+  - type: web
+    name: text-tools
+    runtime: node
+    plan: starter
+    buildCommand: npm ci && npm run build
+    startCommand: node dist/index.js
+    healthCheckPath: /health
+    envVars:
+      - key: RIPAR_NETWORK
+        value: mainnet
+      - key: RIPAR_PAY_TO
+        sync: false
+```
+
+`sync: false` keeps the payout address out of the repository — Render asks for it once
+in the dashboard.
+
+<Callout type="warning" title="Free instances sleep">
+  A sleeping instance answers its first call after a cold start of several seconds. That
+  is fine for an endpoint nobody is waiting on and wrong for one an agent is timing. Use
+  a paid instance for anything you have listed.
+</Callout>
+
+## Fly.io
+
+Fly is the one to reach for when latency matters — run the endpoint in the regions its
+callers are in.
+
+```toml title="fly.toml"
+app = "text-tools"
+primary_region = "iad"
+
+[build]
+
+[env]
+  RIPAR_NETWORK = "mainnet"
+
+[http_service]
+  internal_port = 4021
+  force_https = true
+  auto_stop_machines = "suspend"
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "10s"
+    method = "GET"
+    path = "/health"
+```
+
+```bash
+fly launch --no-deploy
+fly secrets set RIPAR_PAY_TO=ADDR…K7QX
+fly deploy
+```
+
+`internal_port` must match the port `serve()` listens on — `4021` unless you set `PORT`.
+`min_machines_running = 0` scales to zero; raise it to `1` for an endpoint that must
+never cold-start.
+
+## Heroku
+
+A `Procfile` and a git push. The oldest path here, and still the shortest.
+
+```bash title="Procfile"
+web: node dist/index.js
+```
+
+```bash
+heroku create text-tools
+heroku config:set RIPAR_PAY_TO=ADDR…K7QX RIPAR_NETWORK=mainnet
+git push heroku main
+```
+
+Heroku assigns `PORT` at boot, which `serve()` already reads. Dynos restart at least
+daily — harmless here, because nothing is held in memory between requests. If your
+handler caches anything, treat the cache as cold on every boot.
+
+## Docker
+
+The escape hatch: anywhere that runs a container runs a paid endpoint.
+
+```dockerfile title="Dockerfile"
+FROM node:22-slim AS build
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci
+COPY . .
+RUN npm run build
+
+FROM node:22-slim
+WORKDIR /app
+ENV NODE_ENV=production
+COPY package*.json ./
+RUN npm ci --omit=dev
+COPY --from=build /app/dist ./dist
+ENV PORT=4021
+EXPOSE 4021
+HEALTHCHECK --interval=30s --timeout=3s \
+  CMD node -e "fetch('http://127.0.0.1:'+process.env.PORT+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+CMD ["node", "dist/index.js"]
+```
+
+```bash
+docker build -t text-tools .
+docker run -p 4021:4021 -e RIPAR_PAY_TO=ADDR…K7QX text-tools
+```
+
+<Callout type="warning" title="Forward the proxy headers">
+  Behind nginx, Caddy or an ingress controller, pass `x-forwarded-proto` and
+  `x-forwarded-host` through. Without them the manifest advertises the container's own
+  hostname, and a caller that discovers your endpoint cannot reach it.
+</Callout>
+
+```nginx title="nginx.conf"
+location / {
+  proxy_pass http://text-tools:4021;
+  proxy_set_header Host $host;
+  proxy_set_header X-Forwarded-Host $host;
+  proxy_set_header X-Forwarded-Proto $scheme;
+}
+```
+
+## Prove it works
+
+Two checks, in this order. First, the manifest — free, and what every caller reads
+before it decides to pay:
+
+```bash
+curl -s https://your-host/.well-known/ripar.json | jq '{payTo, network, endpoints: [.endpoints[].url]}'
+```
+
+The `payTo` must be your address and the URLs must be reachable from outside. If they
+carry a container hostname or `http://`, the proxy headers are not getting through.
+
+Then the payment gate — an unpaid call must be refused with a price, not served:
+
+```bash
+curl -i -X POST https://your-host/summarize \
+  -H 'content-type: application/json' \
+  -d '{"text":"hello"}'
+```
+
+```http
+HTTP/1.1 402 Payment Required
+X-Payment-Required: {"amount":"$0.01","asset":"USDC","network":"algorand","payTo":"ADDR…K7QX"}
+```
+
+A `200` here means the middleware is not in front of your route, and you are giving the
+work away.
+
+## Listing a self-hosted endpoint
+
+Self-hosting does not take you out of discovery. What the Bazaar indexes is the
+manifest, not the platform underneath it — register your host's
+`/.well-known/ripar.json` and it is listed like any other endpoint.
+
+Ranking then reads the same signals as a managed endpoint: success rate, latency at p50
+and p95, price against comparable endpoints, and settled volume. The difference is that
+uptime is now yours to hold up, and a listing that times out ranks accordingly.
+
+<Cards>
+  <Card title="SDK reference" href="/reference/sdk">
+    Every option on defineEndpoint, defineAgent, serve and RiparClient.
+  </Card>
+  <Card title="Limits & pricing" href="/limits">
+    Timeouts, body sizes and what a call actually costs.
+  </Card>
+</Cards>

@@ -21,8 +21,9 @@ export default defineEndpoint({
     properties: { text: { type: "string", minLength: 1 } },
     required: ["text"],
   },
-  async handler({ body, ctx }) {
-    ctx.log("summarizing", { chars: body.text.length });
+  // The handler takes one argument — log is a field on it, not a second param.
+  async handler({ body, log }) {
+    log("summarizing", { chars: body.text.length });
     return { summary: await summarize(body.text) };
   },
 });

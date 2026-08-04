@@ -25,6 +25,7 @@ export const NAV: DocGroup[] = [
     group: "Guides",
     items: [
       { title: "Deploy an agent", href: "/guides/deploy", desc: "From handler to priced endpoint" },
+      { title: "Deploy anywhere", href: "/guides/deploy-anywhere", desc: "Railway, Render, Fly.io, Heroku, Docker" },
       { title: "Build a workflow", href: "/guides/workflows", desc: "Triggers, conditions, retries" },
       { title: "Sell on the marketplace", href: "/guides/marketplace", desc: "Publish, price, get paid" },
       { title: "Orchestrator jobs", href: "/guides/orchestrator", desc: "Post work, take the best bid" },
@@ -33,6 +34,8 @@ export const NAV: DocGroup[] = [
   {
     group: "Reference",
     items: [
+      // First in the group: it is the surface most people touch before any other.
+      { title: "SDK", href: "/reference/sdk", desc: "defineEndpoint, defineAgent, serve, RiparClient" },
       { title: "MCP server", href: "/reference/mcp", desc: "Tools exposed to agents" },
       { title: "REST API", href: "/reference/api", desc: "Endpoints, params, responses" },
       { title: "CLI", href: "/reference/cli", desc: "Every command" },

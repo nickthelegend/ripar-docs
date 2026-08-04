@@ -157,6 +157,16 @@ figcaption[data-rehype-pretty-code-title] + pre {
   margin-top: 0;
 }
 
+/* language tabs — the strip above the panel owns the top edge, so the block
+   inside it drops its own margin and squares off where the two meet */
+.prose .lang-panel figure[data-rehype-pretty-code-figure] { margin: 0; }
+.prose .lang-panel pre {
+  margin: 0;
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+.prose .lang-panel figcaption[data-rehype-pretty-code-title] { border-radius: 0; }
+
 /* tables */
 .prose table {
   width: 100%;

@@ -33,18 +33,35 @@ cd summarize
 The template is an ordinary HTTP handler. There is nothing blockchain-shaped about it —
 that is the point:
 
+<LangTabs labels={["TypeScript", "Python"]}>
+
 ```ts title="src/index.ts"
 import { defineEndpoint } from "@ripar/sdk";
 
 export default defineEndpoint({
+  name: "summarize",
   // What a caller pays, per request, in USDC.
-  price: "0.01",
-  async handler({ body }) {
+  price: "$0.01",
+  handler: ({ body }) => {
     const { text } = body as { text: string };
     return { summary: text.slice(0, 280) };
   },
 });
 ```
+
+```python title="main.py"
+from ripar import define_endpoint
+
+# What a caller pays, per request, in USDC.
+@define_endpoint(name="summarize", price="$0.01")
+def summarize(body):
+    return {"summary": body["text"][:280]}
+```
+
+</LangTabs>
+
+Every option on `defineEndpoint` — timeouts, input schemas, private endpoints — is in
+the [SDK reference](/reference/sdk).
 
 ## 3 · Set where you get paid
 
@@ -88,11 +105,53 @@ HTTP/1.1 402 Payment Required
 X-Payment-Required: {"amount":"0.01","asset":"USDC","network":"algorand","payTo":"ADDR…K7QX"}
 ```
 
-Retry it with the client, which handles the payment leg for you:
+Retry it with a client that handles the payment leg for you. The handshake is
+identical in every language — only the wrapper differs:
 
-```bash
-ripar call summarize --data '{"text":"a long article…"}'
+<LangTabs>
+
+```ts title="pay.ts"
+import { RiparClient } from "@ripar/sdk";
+
+const ripar = new RiparClient({
+  mnemonic: process.env.RIPAR_WALLET_MNEMONIC,
+  maxPrice: "0.02", // refuse anything above this, whatever the quote says
+});
+
+const res = await ripar.call("https://api.ripar.io/a/summarize", {
+  text: "a long article…",
+});
+
+console.log(res.data);         // { summary: "…" }
+console.log(res.payment?.txId); // 7A2F…9C1B
 ```
+
+```python title="pay.py"
+import os
+from ripar import RiparClient
+
+ripar = RiparClient(
+    mnemonic=os.environ["RIPAR_WALLET_MNEMONIC"],
+    max_price="0.02",  # refuse anything above this, whatever the quote says
+)
+
+res = ripar.call("https://api.ripar.io/a/summarize", {"text": "a long article…"})
+
+print(res.data)          # {"summary": "…"}
+print(res.payment.tx_id) # 7A2F…9C1B
+```
+
+```bash title="pay.sh"
+# curl can carry a payment header but cannot produce one — signing needs a key.
+# Take the header from a client, or let `ripar call` do both legs at once:
+#   ripar call summarize --data '{"text":"a long article…"}'
+curl -s https://api.ripar.io/a/summarize \
+  -H 'content-type: application/json' \
+  -H "X-PAYMENT: $RIPAR_PAYMENT" \
+  -d '{"text":"a long article…"}'
+```
+
+</LangTabs>
 
 ```ansi title="output"
 → 402  price 0.01 USDC

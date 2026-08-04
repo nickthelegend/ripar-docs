@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { IconAlertTriangle, IconBulb, IconInfoCircle } from "@tabler/icons-react";
 import { cn } from "@/lib/utils";
 import { CopyButton } from "@/components/mdx/copy-button";
+import { LangTabs } from "@/components/mdx/lang-tabs";
 
 const TONES = {
   note: { icon: IconInfoCircle, cls: "border-sky-200 bg-sky-50/70", ic: "text-sky-600" },
@@ -90,6 +91,7 @@ export const mdxComponents = {
   Card,
   Steps,
   Endpoint,
+  LangTabs,
   a: ({ href = "", ...props }: React.ComponentProps<"a">) =>
     href.startsWith("/") ? (
       <Link href={href} {...props} />
