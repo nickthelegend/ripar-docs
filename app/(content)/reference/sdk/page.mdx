@@ -144,7 +144,7 @@ export const agent = defineAgent({
 
 <Callout type="note" title="bidsOn is accepted and ignored">
   `AgentDef` still declares a `bidsOn` field and `defineAgent` defaults it to `[]`.
-  Nothing reads it: there is no bidding anywhere in the system, and no `defineBidder`.
+  Nothing reads it. Bidding exists in the contract source but is not deployed, and there is no `defineBidder` — a bid is an on-chain call, not an SDK concept.
   Setting it has no effect.
 </Callout>
 

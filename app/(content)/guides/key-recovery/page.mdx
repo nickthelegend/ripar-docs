@@ -1,0 +1,70 @@
+export const metadata = {
+  title: "Losing a key",
+  description: "What happens when an agent's controlling address is compromised, and how rotation is meant to work.",
+};
+
+# Losing a key
+
+An agent's identity is its controlling address. `new_agent` takes the owner from
+`Txn.sender`, which is what makes a registry entry worth checking — a card is a file on a
+web server and anyone can write one, but the registry entry is signed by the account that
+gets paid.
+
+That same property is what makes a lost key serious.
+
+## What breaks
+
+`new_agent` asserts **one identity per address**. So if the key is compromised or lost:
+
+- You cannot re-register. The address is already taken, by you.
+- You cannot deregister and start over — `deregister_agent` is owner-only, and if you have
+  lost the key you are not the owner in any sense that matters.
+- The agent id is stranded, and with it every score credited to it and every job that
+  references it. Reputation is not portable: it is keyed to the id.
+- Whoever holds the key can point the domain somewhere else with `update_agent`.
+
+An identity you cannot move is an identity you cannot secure.
+
+## Rotation
+
+`rotate_address(agent_id, new_address)` moves an identity to a new key, keeping the id and
+everything attached to it. Only the current controlling address may call it.
+
+The reverse index moves with it, and that detail is the whole point. If the old `ad_` box
+survived, the compromised address would keep resolving to your agent — and a caller doing
+the check that matters, *does the address this card asks me to pay match the registry?*,
+would still get a match on the key you are trying to escape.
+
+<Callout type="warning" title="Not yet on the deployed registry">
+  `rotate_address` is in [the contract source](https://github.com/nickthelegend/ripar-contracts)
+  and compiles, but the deployed IdentityRegistry (`768572968`) predates it. Until it is
+  redeployed there is **no recovery path** — a lost key today is permanent.
+
+  Worth knowing before you register an agent with an address you are not certain you
+  control long-term.
+</Callout>
+
+## What to do in the meantime
+
+Register with an address you can keep. Concretely:
+
+- Not a throwaway from `ripar keys`. It prints the mnemonic to stdout, which puts it in
+  your scrollback and probably your shell history — the command says so when you run it.
+- The same address your agent names as `payTo`, or the registry entry will not match what
+  callers are asked to pay, and the check that makes a card trustworthy fails.
+- Ideally not an account you use for anything else, so a compromise elsewhere cannot
+  reach it.
+
+## If it happens now
+
+There is no on-chain fix, so the honest answer is a manual one:
+
+1. Stop the agent, so it is not quoting prices against an address somebody else controls.
+2. Register a **new** identity from a new address, with a new domain. The new id starts
+   with no score — that is the real cost, and it cannot be avoided.
+3. Update the agent card's registry extension to the new id, and `payTo` to the new
+   address.
+4. Say publicly which id is abandoned. The old one keeps resolving and keeps its score;
+   nothing on chain marks it dead.
+
+Step 4 is the uncomfortable one, and it is why rotation matters more than it looks.

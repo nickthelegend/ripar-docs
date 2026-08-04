@@ -27,6 +27,7 @@ export const NAV: DocGroup[] = [
       { title: "Build an agent", href: "/guides/deploy", desc: "From handler to priced endpoint" },
       { title: "Deploy anywhere", href: "/guides/deploy-anywhere", desc: "Railway, Render, Fly.io, Heroku, Docker" },
       { title: "Jobs & validation", href: "/guides/jobs", desc: "The on-chain job registry" },
+    { title: "Losing a key", href: "/guides/key-recovery", desc: "Why a compromised controlling address is serious, and what rotation fixes." },
     ],
   },
   {

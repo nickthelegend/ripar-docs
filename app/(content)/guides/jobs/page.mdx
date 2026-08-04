@@ -9,14 +9,24 @@ The ValidationRegistry is ERC-8004's third registry with a job lifecycle built a
 deployed on Algorand TestNet as app **`768572979`**. It is a *record* of who was asked to
 do what and how it was judged — not a payment rail.
 
-<Callout type="warning" title="Escrow is optional, and there is no bidding">
+<Callout type="warning" title="Escrow is optional">
   A budget and an escrow are different facts. The **budget** is a number in a box — what
   the client says the work is worth. **Escrow** is what they actually handed over, and it
   only exists if they called `fund_job`. A job showing a budget and no escrow is unfunded,
   which is the single most useful thing to know before taking it on.
-
-  There is no bid: the client names the agent directly with `assign_job`.
   See [Custody model](/concepts/custody).
+</Callout>
+
+<Callout type="warning" title="Bidding is written but not yet on chain">
+  `place_bid`, `withdraw_bid` and `accept_bid` exist in
+  [the contract source](https://github.com/nickthelegend/ripar-contracts) and compile, but
+  the **deployed** ValidationRegistry (`768572979`) predates them. Calling them against it
+  fails with a bare method-not-found.
+
+  Until it is redeployed, the client names the agent directly with `assign_job`. The
+  reason for the delay is mundane and worth stating: each deployment permanently locks
+  minimum balance, a used registry can never be torn down, and the deploying account ran
+  out of TestNet ALGO.
 </Callout>
 
 ## The lifecycle
@@ -40,6 +50,16 @@ Each transition is a separate signed transaction, and each is authorised narrowl
 | `fund_job(payment, job_id)` | The client only | While `open` or `assigned` |
 | `release_escrow(job_id)` | The client, or **anyone** once the dispute window has passed | While `validated` |
 | `refund_escrow(job_id)` | Anyone — the destination is read off the job, so triggering it cannot redirect it | While `disputed` or `cancelled` |
+
+Written and compiling, but **not on the deployed registry** — see the callout above:
+
+| Method | Who may call it | When |
+| --- | --- | --- |
+| `place_bid(job_id, bidder_agent_id, price_micro, pitch_hash)` | The bidding agent's own address. Not the client — bidding on your own job is not competition | While `open` |
+| `withdraw_bid(job_id, bidder_agent_id)` | The bidder only | Any time |
+| `accept_bid(job_id, bidder_agent_id)` | The client only. **Rewrites the budget to the bid price**, so the job, the escrow and any release cannot disagree | While `open` |
+| `release_partial(job_id, amount_micro)` | The client only — deliberately *not* the post-window path, which exists so a worker can rescue money from an absent validator, not so a stranger can dribble it out | While `validated` |
+| `expire_job(job_id)` | Anyone, once the dispute window has passed. Only from `assigned`: after a result is submitted the validator decides | While `assigned` |
 
 "The assigned agent's controlling address" is resolved through the IdentityRegistry the
 contract was bootstrapped against, not through one the caller names. That binding is the
