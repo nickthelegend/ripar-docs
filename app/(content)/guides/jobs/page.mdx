@@ -6,7 +6,7 @@ export const metadata = {
 # Jobs & validation
 
 The ValidationRegistry is ERC-8004's third registry with a job lifecycle built around it,
-deployed on Algorand TestNet as app **`768572979`**. It is a *record* of who was asked to
+deployed on Algorand TestNet as app **`768634000`**. It is a *record* of who was asked to
 do what and how it was judged — not a payment rail.
 
 <Callout type="warning" title="Escrow is optional">
@@ -20,7 +20,7 @@ do what and how it was judged — not a payment rail.
 <Callout type="warning" title="Bidding is written but not yet on chain">
   `place_bid`, `withdraw_bid` and `accept_bid` exist in
   [the contract source](https://github.com/nickthelegend/ripar-contracts) and compile, but
-  the **deployed** ValidationRegistry (`768572979`) predates them. Calling them against it
+  the **deployed** ValidationRegistry (`768634000`) predates them. Calling them against it
   fails with a bare method-not-found.
 
   Until it is redeployed, the client names the agent directly with `assign_job`. The
@@ -156,7 +156,7 @@ or by a single `jobId`. Statuses are `open`, `assigned`, `submitted`, `validated
 
 ## Reputation, and its gap
 
-Jobs and the ReputationRegistry (app `768572969`) meet in one place: a verdict is written
+Jobs and the ReputationRegistry (app `768633999`) meet in one place: a verdict is written
 to the agent's score by inner call, so `validated` and `disputed` reflect judged work.
 Only the ValidationRegistry may make that call — an address calling `record_validation`
 directly is refused, checked against the caller's application id.
