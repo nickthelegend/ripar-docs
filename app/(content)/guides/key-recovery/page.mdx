@@ -35,13 +35,14 @@ survived, the compromised address would keep resolving to your agent — and a c
 the check that matters, *does the address this card asks me to pay match the registry?*,
 would still get a match on the key you are trying to escape.
 
-<Callout type="warning" title="Not yet on the deployed registry">
-  `rotate_address` is in [the contract source](https://github.com/nickthelegend/ripar-contracts)
-  and compiles, but the deployed IdentityRegistry (`768633998`) predates it. Until it is
-  redeployed there is **no recovery path** — a lost key today is permanent.
+<Callout type="note" title="Live on the deployed registry">
+  `rotate_address` is dispatchable on IdentityRegistry `769444119`. An earlier deployment
+  predated it, which meant a lost key was permanent; that gap is closed.
 
-  Worth knowing before you register an agent with an address you are not certain you
-  control long-term.
+  The registry itself is the proof of why this matters. Two earlier generations
+  (`768572968` and `768633998`) are still on chain and still readable, and nobody can
+  write to either — their deployer mnemonics were stored in `/tmp` and pruned. Rotation
+  only helps if you still control the current address, so rotate before you need to.
 </Callout>
 
 ## What to do in the meantime
