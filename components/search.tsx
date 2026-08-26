@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { IconSearch } from "@tabler/icons-react";
 import { FLAT } from "@/lib/nav";
@@ -16,18 +16,34 @@ export function Search() {
   const inputRef = useRef<HTMLInputElement>(null);
   const router = useRouter();
 
-  // ⌘K / Ctrl-K anywhere
+  // Open on a clean slate.
+  //
+  // The reset used to live in an effect keyed on `open`, which meant every
+  // close ran setQ/setSel synchronously in an effect body and cascaded a
+  // second render — the thing react-hooks flags. Clearing on the way in
+  // instead is the same thing the user sees (the dialog always opens empty)
+  // without the extra pass, because q and sel are only ever read while open.
+  const openSearch = useCallback(() => {
+    setQ("");
+    setSel(0);
+    setOpen(true);
+  }, []);
+
+  // ⌘K / Ctrl-K anywhere. Depends on `open` so the shortcut can tell which way
+  // it is toggling; re-binding one keydown listener per open/close is cheaper
+  // than keeping a ref in sync with it.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
-        setOpen((v) => !v);
+        if (open) setOpen(false);
+        else openSearch();
       }
       if (e.key === "Escape") setOpen(false);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [open, openSearch]);
 
   // The heading-level index is generated at build time; fall back to the
   // page list alone if it has not been fetched yet.
@@ -39,12 +55,12 @@ export function Search() {
       .catch(() => setIndex([]));
   }, [open, index.length]);
 
+  // Focus only. Moving the DOM node into focus is exactly what an effect is
+  // for; the timeout is now cleared on close, which the old version leaked.
   useEffect(() => {
-    if (open) setTimeout(() => inputRef.current?.focus(), 20);
-    else {
-      setQ("");
-      setSel(0);
-    }
+    if (!open) return;
+    const t = setTimeout(() => inputRef.current?.focus(), 20);
+    return () => clearTimeout(t);
   }, [open]);
 
   const pool: Entry[] = index.length ? index : FLAT;
@@ -67,7 +83,7 @@ export function Search() {
     <>
       <button
         type="button"
-        onClick={() => setOpen(true)}
+        onClick={openSearch}
         className="flex w-full items-center gap-2 rounded-lg border border-neutral-200 bg-white px-3 py-1.5 text-[13px] text-neutral-400 transition-colors hover:border-neutral-300 md:w-[210px]"
       >
         <IconSearch size={14} />

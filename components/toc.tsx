@@ -18,6 +18,12 @@ export function Toc() {
     const nodes = Array.from(
       document.querySelectorAll<HTMLHeadingElement>(".prose h2[id], .prose h3[id]")
     );
+    // The headings are read back out of the DOM the MDX just rendered, so this
+    // measurement cannot happen before paint and the one extra pass on mount is
+    // inherent rather than accidental. Unlike the reset this rule caught in
+    // search.tsx — which was avoidable and was moved out of its effect — there
+    // is no earlier moment to read a heading list that does not exist yet.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setHeads(nodes.map((n) => ({ id: n.id, text: n.textContent ?? "", level: +n.tagName[1] })));
 
     if (!nodes.length) return;
