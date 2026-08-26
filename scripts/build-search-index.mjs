@@ -34,7 +34,14 @@ for (const file of files) {
 
   // h2/h3 become their own deep-linked results
   for (const m of src.matchAll(/^(#{2,3})\s+(.+)$/gm)) {
-    const text = m[2].replace(/[`*_]/g, "").trim();
+    // Strip Markdown formatting markers only. A blanket [`*_] strip also ate
+    // underscores inside identifiers, turning `ripar_settle_escrow` into
+    // riparsettleescrow — wrong text, and a #href no heading answers to.
+    const text = m[2]
+      .replace(/`/g, "")
+      .replace(/\*\*?([^*]+)\*\*?/g, "$1")
+      .replace(/(^|[\s([{])_([^_]+)_(?=$|[\s)\]}.,:;!?])/g, "$1$2")
+      .trim();
     const slug = text
       .toLowerCase()
       .replace(/[^\w\s-]/g, "")
