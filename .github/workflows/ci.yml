@@ -37,6 +37,12 @@ jobs:
       - name: Typecheck
         run: npx tsc --noEmit
 
+      # Added after a sibling repo accumulated eleven lint problems unnoticed —
+      # two of them refs touched during render, which tsc and next build both
+      # pass. This repo is clean today; the step is here to keep it that way.
+      - name: Lint
+        run: npx eslint .
+
       # `npm run build` regenerates public/search-index.json from the MDX tree
       # before compiling, so a page added without its index entry cannot ship —
       # the index is a build output here, never a hand-edited file.
