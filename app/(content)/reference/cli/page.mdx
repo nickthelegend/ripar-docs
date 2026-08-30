@@ -14,6 +14,8 @@ npm link            # puts `ripar` on your PATH
 
 ## Commands
 
+**Building and running one.**
+
 | Command | Does |
 | --- | --- |
 | `ripar init <name>` | Scaffold a new agent from a template |
@@ -23,8 +25,39 @@ npm link            # puts `ripar` on your PATH
 | `ripar manifest <url>` | Print an agent's published manifest |
 | `ripar doctor` | Check node, facilitator, network and payout address |
 
+**Checking something already deployed.**
+
+| Command | Does |
+| --- | --- |
+| `ripar test <url>` | End-to-end check of a live agent, one line per check |
+| `ripar bench <url>` | Real quote latency: p50, p95, max, cost per call |
+| `ripar audit <url>` | The specific ways a deployed agent breaks |
+| `ripar openapi` | Emit an OpenAPI spec for your own agent |
+
+**Reading the chain.** These need no wallet and spend nothing.
+
+| Command | Does |
+| --- | --- |
+| `ripar score [agentId]` | An agent's onchain reputation — counts money, not quality |
+| `ripar jobs` | Work posted to the Validation Registry, budget **and** escrow |
+| `ripar escrow <jobId>` | What is held for a job, and what may legally happen next |
+| `ripar bazaar [query]` | The x402 discovery index — everything in it got paid for |
+
+**Identity and keys.**
+
+| Command | Does |
+| --- | --- |
+| `ripar register` | Claim an agent id in the Identity Registry |
+| `ripar rotate <id> <addr>` | Move an agent's identity to a new controlling address |
+| `ripar keys` | Generate an Algorand account, or show an address for a mnemonic |
+| `ripar watch` | Follow settlements as they land |
+
 `ripar --help`, `ripar -v`, and `ripar <command> --help` all work. An unknown command
 exits `1` rather than guessing.
+
+Twelve of these were missing from this page and seven were missing from `ripar --help`
+as well, which meant the only way to find them was to already know they existed. The
+SDK now has a test asserting every dispatchable command appears in its own help output.
 
 ## `ripar init`
 
@@ -137,6 +170,57 @@ fee, and which USDC asset settles. Exits non-zero if any check fails.
 
 Run it before you advertise a URL. An unsponsored facilitator still settles — it just
 means callers need ALGO as well as USDC, which is worth knowing before they find out.
+
+## `ripar score`
+
+```bash
+ripar score 1 --network testnet
+```
+
+Reads the agent's `sc_` box on the ReputationRegistry and prints what it holds: how
+many times it has been paid, the volume, and how many verdicts went each way.
+
+Every credit required a real transfer from a registered client address to the agent's.
+It counts money, not quality — nobody judged the work. An agent with no `sc_` box has
+never been paid through Ripar, which is different from having been paid zero, and the
+output says which.
+
+## `ripar jobs` and `ripar escrow`
+
+```bash
+ripar jobs --network testnet
+ripar escrow 5 --network testnet
+```
+
+`jobs` lists the board with two separate numbers per job: the **budget**, which is what
+the client wrote down, and the **escrow**, which is what the contract is actually
+holding. A job can state a budget and hold nothing — posting a job moves no money, and
+only `fund_job` does.
+
+`escrow` takes one job and adds what the contract will legally accept next, who may
+send it, and when. It is derived from the job's own state rather than from a table in
+the CLI, so it cannot claim an action the chain would reject.
+
+## `ripar bazaar`
+
+```bash
+ripar bazaar
+ripar bazaar solana
+```
+
+Reads the x402 discovery index. Everything listed got there by being paid for rather
+than by announcing itself. Search filters one page locally — the index has no search
+route — so an empty result means "not in what I read", never "does not exist".
+
+## `ripar keys`
+
+```bash
+ripar keys                 # generate
+ripar keys --mnemonic ...  # show the address for one you hold
+```
+
+A generated mnemonic is printed to stdout, so it lands in your scrollback and possibly
+your shell history. Use it for TestNet, or for a payout address you intend to replace.
 
 ## Environment
 
